@@ -35,10 +35,10 @@ void SChatWelcome::Construct(const FArguments& InArgs)
 	OnSessionDeletedEvent = InArgs._OnSessionDeleted;
 
 	ChildSlot
+	.Padding(FMargin(40.0f, 20.0f))
 	[
 		SNew(SBorder)
 		.BorderImage(FAppStyle::Get().GetBrush("ToolPanel.GroupBorder"))
-		.Padding(FMargin(40.0f, 20.0f))
 		[
 			SNew(SVerticalBox)
 
