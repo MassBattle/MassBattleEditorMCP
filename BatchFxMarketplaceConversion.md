@@ -166,6 +166,13 @@ MCP_BatchFxSetRendererDefaults(
 /Game/MassBattleGenerated/BatchFx/TutorialParticle/BP_FxRenderer_TutorialParticle.BP_FxRenderer_TutorialParticle
 ```
 
+该 Niagara 从已有 batched explosion 复制而来，但已禁用多余可见 emitter，只保留：
+
+- `A_Core`: 启用，renderer 关闭，用作内部 source。
+- `A_Smoke`: 启用，sprite/subUV 烟雾表现。
+
+`A_Spark`、`A_Fire`、`B_Shockwave_*`、`B_Fire_*`、`B_Spark_*` 都已禁用，以便更接近 Tutorial Cascade 的单 sprite 烟雾语义。
+
 renderer Blueprint 默认值：
 
 ```text
