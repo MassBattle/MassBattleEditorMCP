@@ -77,12 +77,47 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 
 ## MCP 功能清单
 
-单位查询与读取：读取单位对象和字段快照  
-单位计划与写回：生成差异计划、应用变更、回读校验  
-单位批量处理：按集合执行统一规则改动  
-配置表读写与导出：支持配置化数据到 JSON 的转化  
-特效资产查询：在项目内按类型快速定位可复用效果资源  
-特效文本读取：导出/对齐 FX 文本以便调试和复核  
-批处理 FX 配置：设置批处理 Renderer 参数，统一 SubType/StyleType  
-效果与单位联动校验：Death/Attack/Hit/Appear 等表现链路闭环检查  
-文档化与可视化入口：Document 分支中的网页文档可直接查询步骤与实践
+### 连接与诊断
+
+- `massbattle_ping`：确认 Codex MCP server 能连接 UE 编辑器 bridge。
+- `unit_get_api_status`：读取 Unit MCP 能力表。
+- `effect_asset_get_api_status`：读取 Effect/Batch FX MCP 能力表。
+- `niagara_get_api_status`：读取 Niagara MCP 能力表。
+
+### Unit MCP
+
+- `unit_list`：列出 `MassBattleAgentConfigDataAsset` 单位配置资产。
+- `unit_get`：读取一个单位配置，支持 simple/full 视图和默认过滤。
+- `unit_get_schema`：读取单位可编辑字段、类型、角色和 tooltip。
+- `unit_find_assets`：按单位制作场景查找 SkeletalMesh、Renderer、Niagara 等候选资产。
+- `unit_plan_merge_update`：对单位配置生成并集写入计划，只产生 diff，不直接写资产。
+- `unit_preview_diff`：读取已保存计划的 diff。
+- `unit_apply_plan`：应用已审核计划并保存资产。
+
+### Unit Editor MCP
+
+- `editor_get_status`：读取单位编辑工作流能力。
+- `editor_list_profiles`：列出风格 profile 和 authoring recipe。
+- `editor_get_profile`：读取指定 profile 或 recipe。
+
+### Effect Asset MCP
+
+- `effect_asset_query`：按 `query/root/classes/limit` 查找 Niagara、Cascade、Blueprint、Material、Texture、Sound 等视觉相关资产。
+- `effect_asset_read_summary`：读取未知类型特效资产摘要；Cascade 会返回 emitter、LOD、module 和依赖。
+- `effect_asset_export_text`：导出确定性文本，供 AI 精读和复核。
+- `effect_duplicate_asset`：加法复制资产，不删除或覆盖源资产。
+
+### Niagara MCP
+
+- `niagara_query`：按路径或名称查找 Niagara System。
+- `niagara_read_summary`：读取 Niagara system、emitter、renderer、user parameter、module 摘要。
+- `niagara_read_module`：精读指定 Niagara module 节点和 pin。
+- `niagara_export_text`：导出 Niagara 确定性文本。
+- `niagara_merge_write`：并集写 Niagara 属性，不负责删除。
+- `niagara_delete`：显式删除 renderer、user parameter、禁用 emitter 等。
+
+### Batch FX MCP
+
+- `batch_fx_set_renderer_defaults`：设置 `AMassBattleFxRenderer` 蓝图默认值，包括 `NiagaraSystemAsset`、`NDC_BurstFx`、`SubType`、batch size 和 pooling cooldown。
+
+批处理 FX 的闭环是：读取/复制参考特效资产，准备 batched Niagara/NDC/Renderer 蓝图，由用户把 renderer actor 放进测试关卡，再用 Unit MCP 把 `FFxConfig` 写入 `Hit.SpawnFx`、`Death.SpawnFx`、`Attack.SpawnFx` 等数组。MCP 不负责自动修改当前关卡布局。

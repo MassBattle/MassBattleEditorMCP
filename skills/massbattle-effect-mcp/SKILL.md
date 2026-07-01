@@ -13,6 +13,8 @@ Do not describe this skill as a runtime feature, Unreal plugin, MCP server, Effe
 
 Treat MCP tools like command-line primitives: query, read, export text, merge-write, and delete. Do not ask for a new high-level MCP button until primitive tools cannot reach the required UE data or mutation.
 
+Do not use Effect MCP as a level-layout tool. It may generate and configure a reusable `AMassBattleFxRenderer` Blueprint, but the user owns whether and where that actor is placed in a test map.
+
 ## Safety
 
 Prefer read-only tools first. `MCP_NiagaraMergeWrite(..., bSaveAssets=false)` can still mutate loaded editor assets in memory, so use it only when the user wants an edit attempt.
@@ -40,7 +42,7 @@ Use these generic effect-asset and MassBattle batch-FX MCP tools when available:
 - `MCP_EffectAssetReadSummary(AssetPath, OptionsJson)`: read typed summaries for Niagara, Cascade `UParticleSystem`, material, Blueprint, or generic assets. Cascade summaries expose emitters, LODs, and modules.
 - `MCP_EffectAssetExportText(AssetPath, OptionsJson)`: export a deterministic text dump for close reading.
 - `MCP_EffectDuplicateAsset(SourceAssetPath, NewAssetName, PackagePath, bSaveAssets)`: duplicate reference/template assets. This is additive and does not delete or rewrite the source.
-- `MCP_BatchFxSetRendererDefaults(TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets)`: configure an `AMassBattleFxRenderer` Blueprint CDO for a batched FX subtype.
+- `MCP_BatchFxSetRendererDefaults(TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets)`: configure an `AMassBattleFxRenderer` Blueprint CDO for a batched FX subtype. This does not place the actor in a level.
 
 Use Unit MCP only to apply an already-designed effect to a unit config. Use Niagara MCP to understand or author Niagara reference assets.
 
@@ -69,7 +71,7 @@ When the source effect type is unknown:
    - Burst: `NDC_BurstFx` fields `BurstLocation`, `BurstOrientation`, `BurstScale`, `SubType`, `Style`.
    - Attached: `LocationArray_Attached`, `OrientationArray_Attached`, `ScaleArray_Attached`, `IsHiddenArray_Attached`, `NiagaraIDIndex_Attached`, `NiagaraIDAcquireTag_Attached`, optional `StyleArray_Attached`.
 8. Duplicate `BP_FxRendererTemplate` with `MCP_DuplicateClassAsset` or a generic asset duplicate, then call `MCP_BatchFxSetRendererDefaults`.
-9. Ensure an instance of that FX renderer Blueprint exists in the test level; `AMassBattleFxRenderer::BeginPlay` registers the subtype.
+9. Tell the user to place one instance of the generated FX renderer Blueprint in the test level manually. The actor must exist at BeginPlay because `AMassBattleFxRenderer::BeginPlay` registers the subtype with `MassBattleSubsystem->FxRenderers`.
 10. Use Unit MCP to merge a `FFxConfig` into `Hit.SpawnFx`, `Death.SpawnFx`, `Appear.SpawnFx`, `Attack.SpawnFx`, or `Select.SpawnOnSelected.SpawnFx`.
 11. For `FFxConfig`, leave unbatched assets empty and set `SubType_Batched`, `StyleType_Batched`, `bAttached`, `Quantity`, `Delay`, `LifeSpan`, and `Transform`.
 
