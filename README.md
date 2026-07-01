@@ -32,6 +32,11 @@
 文件：`BatchFxMarketplaceConversion.md`  
 场景：市场/普通 FX 转为批处理 FX，并通过单元配置联动。
 
+### Order 4：Demo 批处理特效实战
+
+文件：`BatchFxDemoLearning_JapanSoldier.md`
+场景：学习 MassBattleFrame Demo 的批处理爆炸、子弹、选择圈链路，并把测试日本步兵接入批处理 FX。
+
 ### API 与设计说明
 
 文件：`MassBattleEditorMCP_Design.md`  
@@ -39,8 +44,8 @@
 
 ## 快速部署说明（给团队用）
 
-1. 该仓库已使用 `Document` 分支承载文档站源文件，默认可作为 GitHub Pages 读源目录。
-2. 如果你已开启 Pages，可设置 `Source` 为 `Document` 分支根目录（或对应分支下根目录）。
+1. 该仓库使用 `Document` 分支承载文档站源文件；本地 worktree 通常位于 `Document/`。
+2. 如果你已开启 Pages，可设置 `Source` 为 `Document` 分支根目录。
 3. 发布后访问地址直接作为团队统一文档入口，例如：  
    - `https://<你的组织>.github.io/MassBattleEditorMCP/`
 

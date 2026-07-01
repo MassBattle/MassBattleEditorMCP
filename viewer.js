@@ -15,6 +15,11 @@ const DOC_LIST = [
     desc: "把市场 FX 转为批处理 FX 的流程与注意点。",
   },
   {
+    name: "BatchFxDemoLearning_JapanSoldier.md",
+    title: "Demo 批处理实战",
+    desc: "学习 Demo 爆炸、子弹、选择圈，并升级日本步兵。",
+  },
+  {
     name: "MassBattleEditor.md",
     title: "单位编辑与平衡实践",
     desc: "单位工作流、数值与表现字段的拆分与操作建议。",
@@ -114,4 +119,3 @@ function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
-
