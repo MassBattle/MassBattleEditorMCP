@@ -1,0 +1,4 @@
+interface:
+  display_name: "MassBattle Unit Authoring"
+  short_description: "Create and edit MassBattle units"
+  default_prompt: "Use $massbattle-unit-authoring to create or update a MassBattle unit from existing project assets."

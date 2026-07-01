@@ -1,0 +1,4 @@
+interface:
+  display_name: "MassBattle Effect MCP"
+  short_description: "Use Niagara MCP primitives for effects"
+  default_prompt: "Use $massbattle-effect-mcp to inspect a Niagara reference and make a safe union-merge edit."
