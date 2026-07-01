@@ -34,6 +34,7 @@ Use these Niagara MCP tools when available:
 - `MCP_NiagaraReadAll(SystemPath, OptionsJson)`: read reflected properties and all module nodes.
 - `MCP_NiagaraExportText(SystemPath, OptionsJson)`: create a deterministic text dump for close reading.
 - `MCP_NiagaraMergeWrite(SystemPath, PatchJson, bSaveAssets)`: union-merge property writes on `system`, `emitter_data`, or `renderer` targets.
+- `MCP_NiagaraSetModulePin(SystemPath, SelectorJson, PinName, ValueText, bSaveAssets)`: set one FunctionCall module input pin default value. By default, linked pins should be treated as unsafe to overwrite unless `allow_linked=true` is explicitly passed in the selector.
 - `MCP_NiagaraSetEmitterEnabled(SystemPath, EmitterName, bEnabled, bSaveAssets)`: explicitly enable or disable one emitter handle.
 - `MCP_NiagaraDelete(SystemPath, DeleteJson, bSaveAssets)`: explicit deletion actions such as renderer removal, user parameter removal, or destructive emitter disabling.
 
@@ -42,6 +43,7 @@ Use these generic effect-asset and MassBattle batch-FX MCP tools when available:
 - `MCP_EffectAssetQuery(QueryJson)`: find unknown Marketplace visual assets by path/name/class. Use this before assuming Niagara.
 - `MCP_EffectAssetReadSummary(AssetPath, OptionsJson)`: read typed summaries for Niagara, Cascade `UParticleSystem`, material, Blueprint, or generic assets. Cascade summaries expose emitters, LODs, and modules.
 - `MCP_EffectAssetExportText(AssetPath, OptionsJson)`: export a deterministic text dump for close reading.
+- `MCP_EffectAssetSoftDelete(AssetPath, OptionsJson)`: move unreferenced assets to trash. Default to dry-run and inspect referencers first.
 - `MCP_EffectDuplicateAsset(SourceAssetPath, NewAssetName, PackagePath, bSaveAssets)`: duplicate reference/template assets. This is additive and does not delete or rewrite the source.
 - `MCP_BatchFxReadRendererDefaults(TargetClassPath)`: read `AMassBattleFxRenderer` Blueprint CDO defaults inherited by newly placed actors.
 - `MCP_BatchFxSetRendererDefaults(TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets)`: configure an `AMassBattleFxRenderer` Blueprint CDO for a batched FX subtype. This does not place the actor in a level.
@@ -55,10 +57,26 @@ Use Unit MCP only to apply an already-designed effect to a unit config. Use Niag
 3. Convert promising references to text with `MCP_NiagaraExportText` when detailed reasoning is needed.
 4. Read a specific module with `MCP_NiagaraReadModule` when the summary reveals the relevant FunctionCall node.
 5. Use `MCP_NiagaraReadAll` only when summary/module reads are insufficient or when preparing a write.
-6. Write with `MCP_NiagaraMergeWrite` only for additive/overwriting property changes. Use `value_text` for complex UE import syntax.
-7. Delete with `MCP_NiagaraDelete` only after the target is explicit.
-8. Use `MCP_NiagaraSetEmitterEnabled` for explicit emitter handle enable/disable when merge-write is the wrong semantic.
-9. If the task requires graph surgery that MCP cannot express, request or add a narrower auxiliary MCP rather than folding the workflow into one high-level button.
+6. Write object properties with `MCP_NiagaraMergeWrite` only for additive/overwriting property changes. Use `value_text` for complex UE import syntax.
+7. Write module input defaults with `MCP_NiagaraSetModulePin` only after reading the module pins. Do not force linked pins unless the link has been understood.
+8. Delete with `MCP_NiagaraDelete` only after the target is explicit.
+9. Use `MCP_NiagaraSetEmitterEnabled` for explicit emitter handle enable/disable when merge-write is the wrong semantic.
+10. If the task requires graph surgery that MCP cannot express, request or add a narrower auxiliary MCP rather than folding the workflow into one high-level button.
+
+## Template-First Batch FX
+
+Prefer a template plus diff workflow over blank asset creation.
+
+1. Read the default style profile with Unit Editor MCP: `MCP_EditorGetProfile("style", "default")`.
+2. Inspect `batch_fx_templates` and choose the closest reference:
+   - `mesh_burst_hit`: visible MeshRenderer hit/death burst for proving the batch path.
+   - `sprite_explosion_burst`: existing batched explosion/fire reference.
+   - `projectile_muzzle_burst`: attack/muzzle reference.
+3. Duplicate the template Niagara and renderer Blueprint with `MCP_EffectDuplicateAsset`.
+4. Keep or disable emitters according to the template's `keep_emitters` / `disable_emitters`.
+5. Use `MCP_NiagaraMergeWrite` for bounds, renderer properties, sim target, and other UObject properties.
+6. Use `MCP_NiagaraSetModulePin` for module-level visual parameters such as lifetime, scale, spawn count, random ranges, or color constants.
+7. Configure the renderer Blueprint CDO with `MCP_BatchFxSetRendererDefaults`; make sure its NDC asset matches the Niagara graph's NDC reader modules.
 
 ## Marketplace FX To Batch FX
 
@@ -69,7 +87,7 @@ When the source effect type is unknown:
 3. Decide whether the MassBattle remake should be `Burst` or `Attached`.
 4. Explosion, hit sparks, muzzle flash, and death fire burst should usually be `Burst` through `NDC_BurstFx`.
 5. Aura, burning status loop, weapon trail, and selection aura should usually be `Attached` through `LocationArray_Attached` and persistent ID arrays.
-6. Duplicate `NS_FxRendererTemplate` or an existing batched FX renderer Niagara with `MCP_EffectDuplicateAsset`.
+6. Duplicate the closest `batch_fx_templates` entry or another existing batched FX renderer Niagara with `MCP_EffectDuplicateAsset`.
 7. Author or edit the duplicated Niagara with low-level Niagara tools. It must consume MassBattle batch inputs:
    - Burst: `NDC_BurstFx` fields `BurstLocation`, `BurstOrientation`, `BurstScale`, `SubType`, `Style`.
    - Attached: `LocationArray_Attached`, `OrientationArray_Attached`, `ScaleArray_Attached`, `IsHiddenArray_Attached`, `NiagaraIDIndex_Attached`, `NiagaraIDAcquireTag_Attached`, optional `StyleArray_Attached`.
@@ -77,7 +95,7 @@ When the source effect type is unknown:
 9. Tell the user to place one instance of the generated FX renderer Blueprint in the test level manually. The actor must exist at BeginPlay because `AMassBattleFxRenderer::BeginPlay` registers the subtype with `MassBattleSubsystem->FxRenderers`.
 10. Before placement, use `MCP_BatchFxReadRendererDefaults` to verify the Blueprint asset defaults. The expected batch path has a non-null Niagara system, a non-null `NDC_BurstFx`, and the same `SubType` that unit `FFxConfig` uses.
 11. Use Unit MCP to merge a `FFxConfig` into `Hit.SpawnFx`, `Death.SpawnFx`, `Appear.SpawnFx`, `Attack.SpawnFx`, or `Select.SpawnOnSelected.SpawnFx`.
-12. For `FFxConfig`, leave unbatched assets empty and set `SubType_Batched`, `StyleType_Batched`, `bAttached`, `Quantity`, `Delay`, `LifeSpan`, and `Transform`.
+12. For `FFxConfig`, leave unbatched assets empty and set `SubType`, `StyleType`, `bAttached`, `Quantity`, `Delay`, `LifeSpan`, and `Transform`. In the current project JSON merge path, `SubType` and `StyleType` should be strings such as `SubType35` and `Style0`.
 
 ## Merge Write Shape
 

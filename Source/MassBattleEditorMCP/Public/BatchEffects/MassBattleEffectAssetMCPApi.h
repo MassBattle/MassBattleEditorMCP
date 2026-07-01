@@ -33,6 +33,9 @@ public:
 	static FString MCP_EffectAssetExportText(const FString& AssetPath, const FString& OptionsJson);
 
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
+	static FString MCP_EffectAssetSoftDelete(const FString& AssetPath, const FString& OptionsJson);
+
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
 	static FString MCP_EffectDuplicateAsset(const FString& SourceAssetPath, const FString& NewAssetName, const FString& PackagePath, bool bSaveAssets);
 
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")

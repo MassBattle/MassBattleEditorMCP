@@ -1306,6 +1306,11 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("SystemPath, PatchJson, bSaveAssets"),
 		TEXT("niagara.write"));
 
+	AddTool(TEXT("MCP_NiagaraSetModulePin"),
+		TEXT("写一个 Niagara FunctionCall 模块输入 Pin 的默认值；默认拒绝已连接 Pin"),
+		TEXT("SystemPath, SelectorJson, PinName, ValueText, bSaveAssets"),
+		TEXT("niagara.write"));
+
 	AddTool(TEXT("MCP_NiagaraDelete"),
 		TEXT("显式删除 Niagara 目标：renderer、user_parameter，或禁用 emitter"),
 		TEXT("SystemPath, DeleteJson, bSaveAssets"),
@@ -1325,6 +1330,11 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("把未知特效资产摘要和反射属性导出为可读文本"),
 		TEXT("AssetPath, OptionsJson"),
 		TEXT("effect_asset.text"));
+
+	AddTool(TEXT("MCP_EffectAssetSoftDelete"),
+		TEXT("检查引用后把未引用特效相关资产软移动到 _Trash；默认 dry_run"),
+		TEXT("AssetPath, OptionsJson"),
+		TEXT("effect_asset.lifecycle"));
 
 	AddTool(TEXT("MCP_EffectDuplicateAsset"),
 		TEXT("复制任意特效相关资产到目标目录"),

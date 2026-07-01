@@ -13,6 +13,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
+#include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Modules/ModuleManager.h"
@@ -279,6 +280,38 @@ static void AddDependencyArrays(UObject* Object, TSharedPtr<FJsonObject>& Root, 
 	Root->SetArrayField(TEXT("soft_dependencies"), NamesToJson(SoftDependencies));
 }
 
+static void AddReferencerArrays(UObject* Object, TSharedPtr<FJsonObject>& Root, int32 Limit)
+{
+	if (!Object || Limit <= 0)
+	{
+		return;
+	}
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	IAssetRegistry& Registry = AssetRegistryModule.Get();
+
+	TArray<FName> HardReferencers;
+	TArray<FName> SoftReferencers;
+	const FName PackageName = Object->GetOutermost()->GetFName();
+	Registry.GetReferencers(PackageName, HardReferencers, UE::AssetRegistry::EDependencyCategory::Package, UE::AssetRegistry::EDependencyQuery::Hard);
+	Registry.GetReferencers(PackageName, SoftReferencers, UE::AssetRegistry::EDependencyCategory::Package, UE::AssetRegistry::EDependencyQuery::Soft);
+
+	auto NamesToJson = [Limit](const TArray<FName>& Names) -> TArray<TSharedPtr<FJsonValue>>
+	{
+		TArray<TSharedPtr<FJsonValue>> Array;
+		for (int32 i = 0; i < Names.Num() && i < Limit; ++i)
+		{
+			Array.Add(MakeShared<FJsonValueString>(Names[i].ToString()));
+		}
+		return Array;
+	};
+
+	Root->SetArrayField(TEXT("hard_referencers"), NamesToJson(HardReferencers));
+	Root->SetArrayField(TEXT("soft_referencers"), NamesToJson(SoftReferencers));
+	Root->SetNumberField(TEXT("hard_referencer_count"), HardReferencers.Num());
+	Root->SetNumberField(TEXT("soft_referencer_count"), SoftReferencers.Num());
+}
+
 static TSharedPtr<FJsonObject> ParticleModuleToJson(UObject* Module, bool bIncludeProperties, int32 MaxProperties)
 {
 	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
@@ -369,7 +402,9 @@ static TSharedPtr<FJsonObject> BuildAssetSummary(UObject* Object, const TSharedP
 {
 	bool bIncludeReflected = false;
 	bool bIncludeDependencies = true;
+	bool bIncludeReferencers = false;
 	int32 MaxDependencyCount = 80;
+	int32 MaxReferencerCount = 80;
 	int32 MaxProperties = 64;
 	int32 MaxModuleProperties = 32;
 	int32 MaxLods = 1;
@@ -378,7 +413,9 @@ static TSharedPtr<FJsonObject> BuildAssetSummary(UObject* Object, const TSharedP
 	{
 		Options->TryGetBoolField(TEXT("include_reflected"), bIncludeReflected);
 		Options->TryGetBoolField(TEXT("include_dependencies"), bIncludeDependencies);
+		Options->TryGetBoolField(TEXT("include_referencers"), bIncludeReferencers);
 		Options->TryGetNumberField(TEXT("max_dependencies"), MaxDependencyCount);
+		Options->TryGetNumberField(TEXT("max_referencers"), MaxReferencerCount);
 		Options->TryGetNumberField(TEXT("max_properties"), MaxProperties);
 		Options->TryGetNumberField(TEXT("max_module_properties"), MaxModuleProperties);
 		Options->TryGetNumberField(TEXT("max_lods"), MaxLods);
@@ -430,6 +467,10 @@ static TSharedPtr<FJsonObject> BuildAssetSummary(UObject* Object, const TSharedP
 	if (bIncludeDependencies)
 	{
 		AddDependencyArrays(Object, Root, MaxDependencyCount);
+	}
+	if (bIncludeReferencers)
+	{
+		AddReferencerArrays(Object, Root, MaxReferencerCount);
 	}
 	return Root;
 }
@@ -540,6 +581,7 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_EffectAssetQuery"), TEXT("effect_asset.query"), TEXT("Query visual effect-related assets across unknown Marketplace asset types."), TEXT("QueryJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectAssetReadSummary"), TEXT("effect_asset.read"), TEXT("Read a typed summary for Niagara, Cascade, material, Blueprint, or generic assets."), TEXT("AssetPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectAssetExportText"), TEXT("effect_asset.text"), TEXT("Write a deterministic text dump for close reading."), TEXT("AssetPath, OptionsJson")));
+	Tools.Add(Tool(TEXT("MCP_EffectAssetSoftDelete"), TEXT("effect_asset.lifecycle"), TEXT("Move an unreferenced generic asset to trash; dry_run=true by default."), TEXT("AssetPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectDuplicateAsset"), TEXT("effect_asset.write"), TEXT("Duplicate an arbitrary asset into a package path."), TEXT("SourceAssetPath, NewAssetName, PackagePath, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_BatchFxReadRendererDefaults"), TEXT("batch_fx.read"), TEXT("Read AMassBattleFxRenderer Blueprint CDO defaults used by newly placed actors."), TEXT("TargetClassPath")));
 	Tools.Add(Tool(TEXT("MCP_BatchFxSetRendererDefaults"), TEXT("batch_fx.write"), TEXT("Set AMassBattleFxRenderer Blueprint CDO defaults: Niagara, NDC_BurstFx, SubType, batch size, and pooling cooldown."), TEXT("TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets")));
@@ -700,6 +742,72 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetExportText(const FString& A
 		const FString OutputPath = FPaths::Combine(GetSavedExportDir(), AssetName + TEXT("_effect.txt"));
 		FFileHelper::SaveStringToFile(Text, *OutputPath);
 		Root->SetStringField(TEXT("text_path"), OutputPath);
+	}
+	return ToJsonString(Root);
+}
+
+FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetSoftDelete(const FString& AssetPath, const FString& OptionsJson)
+{
+	using namespace MassBattleEffectAssetMCP;
+
+	TSharedPtr<FJsonObject> Options = ParseObject(OptionsJson);
+	if (!Options.IsValid())
+	{
+		return MakeErrorJson(TEXT("OptionsJson must be a JSON object"));
+	}
+
+	FString LoadError;
+	UObject* Object = LoadAnyObject(AssetPath, LoadError);
+	if (!Object)
+	{
+		return MakeErrorJson(LoadError);
+	}
+
+	bool bDryRun = true;
+	bool bAllowReferenced = false;
+	Options->TryGetBoolField(TEXT("dry_run"), bDryRun);
+	Options->TryGetBoolField(TEXT("preview_only"), bDryRun);
+	Options->TryGetBoolField(TEXT("allow_referenced"), bAllowReferenced);
+
+	TSharedPtr<FJsonObject> Root = MakeSuccessObject();
+	Root->SetBoolField(TEXT("dry_run"), bDryRun);
+	Root->SetStringField(TEXT("source_path"), Object->GetPathName());
+	AddReferencerArrays(Object, Root, 200);
+
+	const TArray<TSharedPtr<FJsonValue>>* HardRefs = nullptr;
+	const TArray<TSharedPtr<FJsonValue>>* SoftRefs = nullptr;
+	const bool bHasHardRefs = Root->TryGetArrayField(TEXT("hard_referencers"), HardRefs) && HardRefs && !HardRefs->IsEmpty();
+	const bool bHasSoftRefs = Root->TryGetArrayField(TEXT("soft_referencers"), SoftRefs) && SoftRefs && !SoftRefs->IsEmpty();
+	const bool bBlocked = (bHasHardRefs || bHasSoftRefs) && !bAllowReferenced;
+	Root->SetBoolField(TEXT("applicable"), !bBlocked);
+	if (bBlocked)
+	{
+		Root->SetStringField(TEXT("blocked_reason"), TEXT("Asset has referencers; replace references or pass allow_referenced=true before moving."));
+	}
+
+	FString TrashRoot = TEXT("/Game/_Trash/MassBattle/Assets");
+	Options->TryGetStringField(TEXT("trash_root"), TrashRoot);
+	const FString DateFolder = FDateTime::UtcNow().ToString(TEXT("%Y-%m-%d"));
+	const FString TrashPackagePath = TrashRoot / DateFolder;
+	const FString TrashAssetName = Object->GetName();
+	const FString TrashPath = TrashPackagePath / TrashAssetName + TEXT(".") + TrashAssetName;
+	Root->SetStringField(TEXT("trash_path"), TrashPath);
+
+	if (bDryRun || bBlocked)
+	{
+		Root->SetBoolField(TEXT("moved"), false);
+		return ToJsonString(Root);
+	}
+
+	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+	TArray<FAssetRenameData> RenameData;
+	RenameData.Emplace(Object, TrashPackagePath, TrashAssetName);
+	const bool bMoved = AssetToolsModule.Get().RenameAssets(RenameData);
+	Root->SetBoolField(TEXT("moved"), bMoved);
+	if (!bMoved)
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("AssetTools.RenameAssets failed."));
 	}
 	return ToJsonString(Root);
 }

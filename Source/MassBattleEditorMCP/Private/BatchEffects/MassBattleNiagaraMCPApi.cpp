@@ -4,6 +4,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphPin.h"
 #include "HAL/FileManager.h"
 #include "Misc/DateTime.h"
@@ -655,6 +656,103 @@ static bool ReadStringField(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Nam
 {
 	return Obj.IsValid() && Obj->TryGetStringField(Name, OutValue);
 }
+
+static bool ModuleMatchesSelector(const FNiagaraModuleRecord& Record, const TSharedPtr<FJsonObject>& Selector)
+{
+	if (!Record.Node || !Selector.IsValid())
+	{
+		return false;
+	}
+
+	FString EmitterFilter;
+	FString ModuleFilter;
+	FString NodeGuidFilter;
+	int32 ModuleIndex = INDEX_NONE;
+	ReadStringField(Selector, TEXT("emitter"), EmitterFilter);
+	ReadStringField(Selector, TEXT("module"), ModuleFilter);
+	ReadStringField(Selector, TEXT("module_title"), ModuleFilter);
+	ReadStringField(Selector, TEXT("function_name"), ModuleFilter);
+	ReadStringField(Selector, TEXT("node_guid"), NodeGuidFilter);
+	Selector->TryGetNumberField(TEXT("module_index"), ModuleIndex);
+	Selector->TryGetNumberField(TEXT("index"), ModuleIndex);
+
+	if (!EmitterFilter.IsEmpty() && !Record.EmitterName.Equals(EmitterFilter, ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+	if (ModuleIndex != INDEX_NONE && Record.ModuleIndex != ModuleIndex)
+	{
+		return false;
+	}
+	if (!NodeGuidFilter.IsEmpty() && !Record.Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens).Equals(NodeGuidFilter, ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+	if (!ModuleFilter.IsEmpty())
+	{
+		const FString Haystack = Record.Node->GetFunctionName()
+			+ TEXT(" ")
+			+ Record.Node->GetNodeTitle(ENodeTitleType::ListView).ToString()
+			+ TEXT(" ")
+			+ Record.Node->FunctionScriptAssetObjectPath.ToString();
+		if (!Haystack.Contains(ModuleFilter, ESearchCase::IgnoreCase))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool FindModuleRecord(UNiagaraSystem* System, const TSharedPtr<FJsonObject>& Selector, FNiagaraModuleRecord& OutRecord, FString& OutError)
+{
+	if (!System)
+	{
+		OutError = TEXT("Invalid Niagara system");
+		return false;
+	}
+	if (!Selector.IsValid())
+	{
+		OutError = TEXT("SelectorJson must be a JSON object");
+		return false;
+	}
+
+	TArray<FNiagaraModuleRecord> Records;
+	CollectModules(System, Records);
+	for (const FNiagaraModuleRecord& Record : Records)
+	{
+		if (ModuleMatchesSelector(Record, Selector))
+		{
+			OutRecord = Record;
+			return true;
+		}
+	}
+
+	OutError = TEXT("No matching Niagara module node found");
+	return false;
+}
+
+static UEdGraphPin* FindModulePin(UNiagaraNodeFunctionCall* Node, const FString& PinName)
+{
+	if (!Node || PinName.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	for (UEdGraphPin* Pin : Node->Pins)
+	{
+		if (!Pin)
+		{
+			continue;
+		}
+		const bool bNameMatches = Pin->PinName.ToString().Equals(PinName, ESearchCase::IgnoreCase);
+		const bool bFriendlyNameMatches = Pin->GetDisplayName().ToString().Equals(PinName, ESearchCase::IgnoreCase);
+		if (bNameMatches || bFriendlyNameMatches)
+		{
+			return Pin;
+		}
+	}
+	return nullptr;
+}
 }
 
 FString UMassBattleNiagaraMCPApi::MCP_NiagaraGetApiStatus()
@@ -683,6 +781,7 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_NiagaraReadAll"), TEXT("niagara.read"), TEXT("Read full reflected Niagara data plus all module nodes."), TEXT("SystemPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraExportText"), TEXT("niagara.text"), TEXT("Write a deterministic text dump for LLM reading."), TEXT("SystemPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraMergeWrite"), TEXT("niagara.write"), TEXT("Union-merge property writes on system/emitter_data/renderer targets; never deletes."), TEXT("SystemPath, PatchJson, bSaveAssets")));
+	Tools.Add(Tool(TEXT("MCP_NiagaraSetModulePin"), TEXT("niagara.write"), TEXT("Set one unlinked function-call module pin default value."), TEXT("SystemPath, SelectorJson, PinName, ValueText, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraSetEmitterEnabled"), TEXT("niagara.write"), TEXT("Set one emitter handle enabled state explicitly."), TEXT("SystemPath, EmitterName, bEnabled, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraDelete"), TEXT("niagara.delete"), TEXT("Explicit destructive operations such as renderer removal or user-parameter removal."), TEXT("SystemPath, DeleteJson, bSaveAssets")));
 	Root->SetArrayField(TEXT("tools"), Tools);
@@ -1026,6 +1125,89 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraMergeWrite(const FString& SystemPat
 	Root->SetStringField(TEXT("system"), System->GetPathName());
 	Root->SetBoolField(TEXT("saved"), bSaved);
 	Root->SetArrayField(TEXT("results"), Results);
+	return ToJsonString(Root);
+}
+
+FString UMassBattleNiagaraMCPApi::MCP_NiagaraSetModulePin(const FString& SystemPath, const FString& SelectorJson, const FString& PinName, const FString& ValueText, bool bSaveAssets)
+{
+	using namespace MassBattleNiagaraMCP;
+
+	TSharedPtr<FJsonObject> Selector = ParseObject(SelectorJson);
+	if (!Selector.IsValid())
+	{
+		return MakeErrorJson(TEXT("SelectorJson must be a JSON object"));
+	}
+
+	FString LoadError;
+	UNiagaraSystem* System = LoadSystem(SystemPath, LoadError);
+	if (!System)
+	{
+		return MakeErrorJson(LoadError);
+	}
+
+	FNiagaraModuleRecord Record;
+	FString SelectorError;
+	if (!FindModuleRecord(System, Selector, Record, SelectorError))
+	{
+		return MakeErrorJson(SelectorError);
+	}
+
+	UEdGraphPin* Pin = FindModulePin(Record.Node, PinName);
+	if (!Pin)
+	{
+		return MakeErrorJson(FString::Printf(TEXT("Pin not found on module %s: %s"), *Record.Node->GetName(), *PinName));
+	}
+
+	bool bAllowLinked = false;
+	bool bAllowOutput = false;
+	Selector->TryGetBoolField(TEXT("allow_linked"), bAllowLinked);
+	Selector->TryGetBoolField(TEXT("allow_output"), bAllowOutput);
+	if (Pin->Direction != EGPD_Input && !bAllowOutput)
+	{
+		return MakeErrorJson(FString::Printf(TEXT("Refusing to write non-input pin: %s"), *PinName));
+	}
+	if (Pin->LinkedTo.Num() > 0 && !bAllowLinked)
+	{
+		return MakeErrorJson(FString::Printf(TEXT("Pin is linked and its default value may be ignored: %s. Pass allow_linked=true in SelectorJson to force."), *PinName));
+	}
+
+	const FString Before = Pin->DefaultValue;
+	System->Modify();
+	if (UNiagaraGraph* Graph = Cast<UNiagaraGraph>(Record.Node->GetGraph()))
+	{
+		Graph->Modify();
+	}
+	Record.Node->Modify();
+	Pin->DefaultValue = ValueText;
+	Pin->DefaultObject = nullptr;
+	Pin->DefaultTextValue = FText::GetEmpty();
+	if (UEdGraph* Graph = Record.Node->GetGraph())
+	{
+		Graph->NotifyGraphChanged();
+	}
+	System->MarkPackageDirty();
+
+	FString SaveError;
+	bool bSaved = false;
+	if (bSaveAssets)
+	{
+		bSaved = SaveAsset(System, SaveError);
+		if (!bSaved)
+		{
+			return MakeErrorJson(SaveError);
+		}
+	}
+
+	TSharedPtr<FJsonObject> Root = MakeSuccessObject();
+	Root->SetStringField(TEXT("system"), System->GetPathName());
+	Root->SetNumberField(TEXT("module_index"), Record.ModuleIndex);
+	Root->SetStringField(TEXT("emitter"), Record.EmitterName);
+	Root->SetStringField(TEXT("module"), Record.Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
+	Root->SetStringField(TEXT("pin"), Pin->PinName.ToString());
+	Root->SetNumberField(TEXT("linked_to_count"), Pin->LinkedTo.Num());
+	Root->SetStringField(TEXT("before"), Before);
+	Root->SetStringField(TEXT("after"), Pin->DefaultValue);
+	Root->SetBoolField(TEXT("saved"), bSaved);
 	return ToJsonString(Root);
 }
 

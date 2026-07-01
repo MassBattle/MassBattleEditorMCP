@@ -129,6 +129,12 @@ async def unit_get_schema(options: Any = None) -> Dict[str, Any]:
 
 
 @mcp.tool()
+async def unit_export(options: Any = None) -> Dict[str, Any]:
+    """Export a compact MassBattle unit balance table to JSON or CSV."""
+    return await get_connection().send_command("MCP_UnitExport", {"OptionsJson": _json_arg(options)})
+
+
+@mcp.tool()
 async def unit_plan_merge_update(unit_path: str, unit_data: Any) -> Dict[str, Any]:
     """Create a non-destructive union-merge plan for a MassBattle unit."""
     return await get_connection().send_command(
@@ -159,6 +165,18 @@ async def unit_find_assets(query: Any) -> Dict[str, Any]:
 
 
 @mcp.tool()
+async def style_summarize_units(options: Any = None) -> Dict[str, Any]:
+    """Summarize MassBattle unit organization by style, family, and path category."""
+    return await get_connection().send_command("MCP_StyleSummarizeUnits", {"OptionsJson": _json_arg(options)})
+
+
+@mcp.tool()
+async def style_plan_organize_units(options: Any = None) -> Dict[str, Any]:
+    """Plan style-based MassBattle unit folder organization without moving assets."""
+    return await get_connection().send_command("MCP_StylePlanOrganizeUnits", {"OptionsJson": _json_arg(options)})
+
+
+@mcp.tool()
 async def editor_get_status() -> Dict[str, Any]:
     """List MassBattle unit editor workflow capabilities."""
     return await get_connection().send_command("MCP_EditorGetStatus")
@@ -176,6 +194,28 @@ async def editor_get_profile(profile_type: str, profile_id: str) -> Dict[str, An
     return await get_connection().send_command(
         "MCP_EditorGetProfile",
         {"ProfileType": profile_type, "ProfileId": profile_id},
+    )
+
+
+@mcp.tool()
+async def editor_plan_organize_unit_assets(unit_path: str, options: Any = None) -> Dict[str, Any]:
+    """Plan moving a MassBattle unit and linked generated/source assets into the selected style layout."""
+    return await get_connection().send_command(
+        "MCP_EditorPlanOrganizeUnitAssets",
+        {"UnitPath": unit_path, "OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def editor_apply_organize_unit_assets(
+    unit_path: str,
+    options: Any = None,
+    save_assets: bool = True,
+) -> Dict[str, Any]:
+    """Apply a reviewed MassBattle unit organization plan; options default to dry_run=true."""
+    return await get_connection().send_command(
+        "MCP_EditorApplyOrganizeUnitAssets",
+        {"UnitPath": unit_path, "OptionsJson": _json_arg(options), "bSaveAssets": save_assets},
     )
 
 
@@ -205,6 +245,15 @@ async def effect_asset_export_text(asset_path: str, options: Any = None) -> Dict
     """Export deterministic text for an effect-related asset."""
     return await get_connection().send_command(
         "MCP_EffectAssetExportText",
+        {"AssetPath": asset_path, "OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def effect_asset_soft_delete(asset_path: str, options: Any = None) -> Dict[str, Any]:
+    """Move an unreferenced generic asset to trash; dry_run=true by default."""
+    return await get_connection().send_command(
+        "MCP_EffectAssetSoftDelete",
         {"AssetPath": asset_path, "OptionsJson": _json_arg(options)},
     )
 
@@ -302,6 +351,27 @@ async def niagara_merge_write(system_path: str, patch: Any, save_assets: bool = 
     return await get_connection().send_command(
         "MCP_NiagaraMergeWrite",
         {"SystemPath": system_path, "PatchJson": _json_arg(patch), "bSaveAssets": save_assets},
+    )
+
+
+@mcp.tool()
+async def niagara_set_module_pin(
+    system_path: str,
+    selector: Any,
+    pin_name: str,
+    value_text: str,
+    save_assets: bool = True,
+) -> Dict[str, Any]:
+    """Set one Niagara function-call module input pin default value."""
+    return await get_connection().send_command(
+        "MCP_NiagaraSetModulePin",
+        {
+            "SystemPath": system_path,
+            "SelectorJson": _json_arg(selector),
+            "PinName": pin_name,
+            "ValueText": value_text,
+            "bSaveAssets": save_assets,
+        },
     )
 
 

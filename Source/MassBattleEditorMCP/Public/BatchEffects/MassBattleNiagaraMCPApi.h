@@ -41,6 +41,9 @@ public:
 	static FString MCP_NiagaraMergeWrite(const FString& SystemPath, const FString& PatchJson, bool bSaveAssets);
 
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Niagara")
+	static FString MCP_NiagaraSetModulePin(const FString& SystemPath, const FString& SelectorJson, const FString& PinName, const FString& ValueText, bool bSaveAssets);
+
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Niagara")
 	static FString MCP_NiagaraSetEmitterEnabled(const FString& SystemPath, const FString& EmitterName, bool bEnabled, bool bSaveAssets);
 
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Niagara")
