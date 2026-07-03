@@ -1,135 +1,134 @@
 # MassBattleEditorMCP
 
-在我读大学的时候接触到了 RTS 游戏，这段经历让我更擅长从全局看问题，而不是只盯着单一细节。  
-后来的 AI 时代又让我下了一个很实用的判断：RTS 的思路更适合理解人机关系。  
-人类负责战略规划，AI 负责战术执行，二者分工清晰、目标可控、效率更高。
+[中文文档](zh.md)
 
-如果把真实世界看成一个复杂的简化模拟，那么 Mass Battle 的游戏世界就是很好的近似。  
-当单位规模到达上万后，这个结论更明显：越高层次的战略思考越重要，越底层的战术细节越适合系统化交给工具链处理。
+I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 
-## 插件定位：服务于 Mass Battle 的大规模战斗插件
+That is also why RTS matters to me. An ambitious RTS should not start with a vision of massive war, then cut the unit count down to a handful because the technology cannot carry the design. Scale is not decoration. Scale changes the gameplay, the tactical space, the presentation layer, and the tools required to build the game.
 
-Mass Battle 插件目标是以“上万单位”为规模进行 RTS 模拟，既要拉满性能，也要保持通用性。  
-这意味着它的实现方式不能和低规模、低复杂度的传统玩法逻辑直接混用，很多流程都需要“转译”。
+[Mass Battle Frame](https://github.com/MassBattle/MassBattleFrame) fits my taste because it aims at extreme performance. Only when the foundation is fast enough can we afford the things that look wasteful but create the experience: denser units, richer visuals, larger battlefields, and more tactical feedback. If your RTS target is thousands or tens of thousands of units, [Mass Battle Frame on Fab](https://www.fab.com/listings/191850b4-44d3-4455-aa76-874bc0196a10?lang=zh-cn) is not a luxury. It is necessary infrastructure.
 
-常见的转译场景包括：  
-单位创建器转译  
-配置表转译  
-特效批处理转译  
-表现链路转译（动画、材质、Mesh、FX）
+When a plugin is good enough, hobbyists naturally start building around it. MassBattleEditorMCP is one proof of that. It is not a runtime feature of Mass Battle Frame. It is an editor tool hand that AI can use. It exposes unit, effect, material, renderer, Niagara, and DataAsset authoring as callable, readable, batchable editor operations, so AI can handle tactical asset translation while humans keep ownership of design judgment.
 
-这些转译在传统流程里往往非常耗时、容易出错，也容易因改动小而引入回归。  
-所以我们需要一个工具层，把重复且繁琐、规则又明显的工作交给 AI，让开发者把精力放回策略设计、玩法平衡、玩法验证这些更高层问题。
+If your game already has thousands of units, this ecosystem is valuable. The story above may be dry, but it is real: strong core technology attracts surrounding community tools. Alongside this MCP plugin, there are other community plugins around Mass Battle and RTS workflows:
 
-MassBattleEditorMCP 的作用，就是在 Mass Battle 的工作流里，把“战术层素材和配置转译”做成可调用、可复查、可批量执行的机制。  
-开发者不必再把大量时间花在逐个单位、逐个特效的手工适配上，而是能更快确认规则是否符合既定策略目标。
+- [FogOfWar](https://github.com/MassBattle/FogOfWar): fog of war for Mass Battle.
+- [MassBattleMinimap](https://github.com/winyunq/MassBattleMinimap): RTS panel / minimap-oriented plugin.
+- [LandmarkSystem](https://github.com/winyunq/LandmarkSystem): unit initial placement editor and landmark-system-oriented plugin.
 
-## 现在可用的核心能力
+## Plugin Positioning: Editor Tools For Large-Scale Mass Battle Workflows
 
-插件以“先查后改、先计划后应用、改后可回读”为默认节奏，强调可重复和可追溯。  
-你可以用它完成单位表现与数值的差异化改动，也可以快速把非批处理素材适配到可扩展的批处理系统。
+MassBattleEditorMCP turns tactical asset and configuration translation in Mass Battle workflows into callable, readable, batchable editor operations. It supports unit creation, configuration translation, batch-effect conversion, and presentation-chain translation across animation, materials, meshes, and FX.
 
-## 使用入口
+Developers should not spend most of their time manually adapting one unit or effect at a time. This plugin lets them verify whether rules match strategic design goals faster.
 
-在线文档（中文）：`https://winyunq.github.io/MassBattleEditorMCP/`  
-本地文档入口：`Document/index.html`（`Document` worktree / `Document` 分支）
+## Core Capabilities
+
+The default rhythm is read first, create or union-write next, explicitly delete only when needed, and read back after changes. The goal is repeatability and traceability.
+You can use it to differentiate unit presentation and balance data, or to adapt non-batched assets into scalable batch-processing systems.
+
+## Entry Points
+
+Online documentation: `https://github.com/MassBattle/MassBattleEditorMCP`
+Local documentation entry: `Document/index.html` (`Document` worktree / `Document` branch)
 
 ## AI Skills
 
-仓库内置可给其他 AI 直接使用的 Codex skills，位置在 `skills/`：
+This repository includes Codex skills under `skills/`:
 
-`skills/massbattle-unit-authoring`：指导 AI 使用 Unit MCP 创建、读取、计划、合并、删除和验证 MassBattle 单位配置。  
-`skills/massbattle-effect-mcp`：指导 AI 使用 Niagara / Effect MCP 查询、读取、导出、复制和配置批处理特效，并与 Unit MCP 联动。
+`skills/massbattle-unit-authoring`: guides AI through Unit MCP creation, reading, union-writing, deletion, and validation for MassBattle unit configs.
+`skills/massbattle-effect-mcp`: guides AI through Niagara / Effect MCP querying, reading, exporting, duplication, and batch-effect configuration, with Unit MCP coordination.
 
-安装到本机 Codex：
+Install to local Codex:
 
 ```powershell
 Copy-Item -Recurse -Force .\skills\massbattle-unit-authoring $env:USERPROFILE\.codex\skills\
 Copy-Item -Recurse -Force .\skills\massbattle-effect-mcp $env:USERPROFILE\.codex\skills\
 ```
 
-如果设置了 `CODEX_HOME`，则复制到 `$env:CODEX_HOME\skills\`。  
-MCP 是编辑器工具接口，skill 只描述如何组合这些工具，不把 workflow 写成一个大按钮。
+If `CODEX_HOME` is set, copy them to `$env:CODEX_HOME\skills\`.
+MCP is the editor tool interface. A skill only describes how to compose those tools; it should not turn a workflow into one large button.
 
-### Codex MCP Server 安装
+### Codex MCP Server Installation
 
-MassBattleEditorMCP 的 Codex 入口由两层组成：
+MassBattleEditorMCP has two Codex-facing layers:
 
-1. UE 编辑器插件内的本地 TCP bridge：默认监听 `127.0.0.1:55558`。
-2. `Resources/Python/MassBattleMcpServer.py`：STDIO MCP server，把 Codex tool call 转发给 UE bridge。
+1. A local TCP bridge inside the UE editor plugin, listening on `127.0.0.1:55558` by default.
+2. `Resources/Python/MassBattleMcpServer.py`, a STDIO MCP server that forwards Codex tool calls to the UE bridge.
 
-安装到 Codex：
+Install to Codex:
 
 ```powershell
 .\Scripts\Install-CodexMassBattleMCP.ps1
 ```
 
-快速检查安装和 UE bridge：
+Quickly check the installation and UE bridge:
 
 ```powershell
 .\Scripts\QuickStart-CodexMassBattleMCP.ps1
 ```
 
-安装后需要重启 Codex 或新开会话；UE 编辑器也需要加载本插件，bridge 才会开始监听。
-安装成功后应能看到 `massbattle-editor-mcp`，并可调用 `unit_get`、`unit_plan_merge_update`、`unit_apply_plan`、`effect_asset_read_summary`、`niagara_set_module_pin`、`batch_fx_read_renderer_defaults`、`batch_fx_set_renderer_defaults` 等原语工具。
+After installation, restart Codex or start a new session. The UE editor must also load this plugin before the bridge starts listening.
+After successful installation, you should see `massbattle-editor-mcp` and be able to call primitive tools such as `unit_get`, `unit_create`, `unit_write`, `unit_delete`, `effect_asset_read_summary`, `niagara_set_module_pin`, `batch_fx_read_renderer_defaults`, and `batch_fx_set_renderer_defaults`.
 
-注意：`FFxConfig.AgentBehaviorState` 使用的是 `EAgentBehaviorState`，可写值包括 `None`、`Appearing`、`Sleeping`、`Patrolling`、`Attacking`、`Hit`、`Dying`。受击 FX 应写 `Hit`，不要把运行时 flag 名 `BeingHit` 写进这个字段。
+Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values include `None`, `Appearing`, `Sleeping`, `Patrolling`, `Attacking`, `Hit`, and `Dying`. Hit FX should use `Hit`; do not write the runtime flag name `BeingHit` into this field.
 
-## MCP 功能清单
+## MCP Capability List
 
-| 分类 | MCP 工具 | 状态 | 用途 |
+| Category | MCP Tool | Status | Purpose |
 | --- | --- | :---: | --- |
-| 连接与诊断 | `massbattle_ping` | 可用 | 确认 Codex MCP server 能连接 UE 编辑器 bridge。 |
-| 连接与诊断 | `unit_get_api_status` | 可用 | 读取 Unit MCP 能力表。 |
-| 连接与诊断 | `effect_asset_get_api_status` | 可用 | 读取 Effect Asset / Batch FX MCP 能力表。 |
-| 连接与诊断 | `niagara_get_api_status` | 可用 | 读取 Niagara MCP 能力表。 |
-| Unit MCP | `unit_list` | 可用 | 列出 `MassBattleAgentConfigDataAsset` 单位配置资产。 |
-| Unit MCP | `unit_get` | 可用 | 读取一个单位配置，支持 simple/full 视图和默认过滤。 |
-| Unit MCP | `unit_get_schema` | 可用 | 读取单位可编辑字段、类型、角色和 tooltip。 |
-| Unit MCP | `unit_export` | 可用 | 导出紧凑单位数值表，支持给平衡分析或批量复核使用。 |
-| Unit MCP | `unit_find_assets` | 可用 | 按单位制作场景查找 SkeletalMesh、Renderer、Niagara 等候选资产。 |
-| Unit MCP | `unit_plan_merge_update` | 可用 | 对单位配置生成并集写入计划，只产生 diff，不直接写资产。 |
-| Unit MCP | `unit_preview_diff` | 可用 | 读取已保存计划的 diff。 |
-| Unit MCP | `unit_apply_plan` | 可用 | 应用已审核计划并保存资产。 |
-| Style MCP | `style_summarize_units` | 可用 | 按风格、单位族、路径类别汇总单位资产。 |
-| Style MCP | `style_plan_organize_units` | 可用 | 生成按默认风格整理单位目录的计划，不直接移动资产。 |
-| Unit Editor MCP | `editor_get_status` | 可用 | 读取单位编辑工作流能力。 |
-| Unit Editor MCP | `editor_list_profiles` | 可用 | 列出风格 profile 和 authoring recipe。 |
-| Unit Editor MCP | `editor_get_profile` | 可用 | 读取指定 profile 或 recipe。 |
-| Unit Editor MCP | `editor_plan_organize_unit_assets` | 可用 | 计划把一个单位和关联生成资产移动到风格化目录。 |
-| Unit Editor MCP | `editor_apply_organize_unit_assets` | 可用 | 应用已审核的单位资产整理计划；默认可 dry-run。 |
-| Effect Asset MCP | `effect_asset_query` | 可用 | 按 `query/root/classes/limit` 查找 Niagara、Cascade、Blueprint、Material、Texture、Sound 等视觉相关资产。 |
-| Effect Asset MCP | `effect_asset_read_summary` | 可用 | 读取未知类型特效资产摘要；Cascade 会返回 emitter、LOD、module 和依赖。 |
-| Effect Asset MCP | `effect_asset_export_text` | 可用 | 导出确定性文本，供 AI 精读和复核。 |
-| Effect Asset MCP | `effect_asset_soft_delete` | 可用 | 读取引用后把未引用资产软移动到 `_Trash`；默认 dry-run。 |
-| Effect Asset MCP | `effect_duplicate_asset` | 可用 | 加法复制资产，不删除或覆盖源资产。 |
-| Niagara MCP | `niagara_query` | 可用 | 按路径或名称查找 Niagara System。 |
-| Niagara MCP | `niagara_read_summary` | 可用 | 读取 Niagara system、emitter、renderer、user parameter、module 摘要。 |
-| Niagara MCP | `niagara_read_module` | 可用 | 精读指定 Niagara module 节点和 pin。 |
-| Niagara MCP | `niagara_export_text` | 可用 | 导出 Niagara 确定性文本。 |
-| Niagara MCP | `niagara_merge_write` | 可用 | 并集写 Niagara 属性，不负责删除。 |
-| Niagara MCP | `niagara_set_module_pin` | 可用 | 写一个 Niagara FunctionCall 模块输入 pin 的默认值；默认拒绝已连接 pin。 |
-| Niagara MCP | `niagara_set_emitter_enabled` | 可用 | 显式启用或禁用一个 Niagara emitter handle。 |
-| Niagara MCP | `niagara_delete` | 可用 | 显式删除 renderer、user parameter、禁用 emitter 等。 |
-| Batch FX MCP | `batch_fx_read_renderer_defaults` | 可用 | 读取 `AMassBattleFxRenderer` 蓝图默认值；这些默认值会被之后拖进关卡的新 Actor 实例继承。 |
-| Batch FX MCP | `batch_fx_set_renderer_defaults` | 可用 | 设置 `AMassBattleFxRenderer` 蓝图默认值，包括 `NiagaraSystemAsset`、`NDC_BurstFx`、`SubType`、batch size 和 pooling cooldown。 |
+| Connection / diagnostics | `massbattle_ping` | Available | Confirm that the Codex MCP server can connect to the UE editor bridge. |
+| Connection / diagnostics | `unit_get_api_status` | Available | Read Unit MCP capabilities. |
+| Connection / diagnostics | `effect_asset_get_api_status` | Available | Read Effect Asset / Batch FX MCP capabilities. |
+| Connection / diagnostics | `niagara_get_api_status` | Available | Read Niagara MCP capabilities. |
+| Unit MCP | `unit_list` | Available | List `MassBattleAgentConfigDataAsset` unit config assets. |
+| Unit MCP | `unit_get` | Available | Read one unit config with simple/full views and default filtering. |
+| Unit MCP | `unit_get_schema` | Available | Read editable unit fields, types, roles, and tooltips. |
+| Unit MCP | `unit_export` | Available | Export compact unit balance tables for analysis or batch review. |
+| Unit MCP | `unit_find_assets` | Available | Find candidate SkeletalMesh, Renderer, Niagara, and related assets for unit authoring. |
+| Unit MCP | `unit_create` | Available | Create a new unit; use the default template when no template is provided; optional initial unit data is supported. |
+| Unit MCP | `unit_write` | Available | Union-write partial source-aligned JSON to an existing unit; omitted fields stay unchanged. |
+| Unit MCP | `unit_delete` | Available | Explicitly delete or soft-delete a unit; dry-run by default. |
+| Style MCP | `style_summarize_units` | Available | Summarize unit assets by style, family, and path category. |
+| Style MCP | `style_plan_organize_units` | Available | Plan style-based unit folder organization without moving assets. |
+| Unit Editor MCP | `editor_get_status` | Available | Read unit editor workflow capabilities. |
+| Unit Editor MCP | `editor_list_profiles` | Available | List style profiles and authoring recipes. |
+| Unit Editor MCP | `editor_get_profile` | Available | Read one profile or recipe. |
+| Unit Editor MCP | `editor_plan_organize_unit_assets` | Available | Plan moving one unit and linked generated assets into the style layout. |
+| Unit Editor MCP | `editor_apply_organize_unit_assets` | Available | Apply a reviewed unit asset organization plan; dry-run by default. |
+| Effect Asset MCP | `effect_asset_query` | Available | Query visual assets such as Niagara, Cascade, Blueprint, Material, Texture, and Sound by `query/root/classes/limit`. |
+| Effect Asset MCP | `effect_asset_read_summary` | Available | Read summaries for unknown effect asset types; Cascade returns emitter, LOD, module, and dependency details. |
+| Effect Asset MCP | `effect_asset_export_text` | Available | Export deterministic text for close AI reading and review. |
+| Effect Asset MCP | `effect_asset_soft_delete` | Available | Read references, then move unreferenced assets to `_Trash`; dry-run by default. |
+| Effect Asset MCP | `effect_duplicate_asset` | Available | Additively duplicate assets without deleting or overwriting the source. |
+| Niagara MCP | `niagara_query` | Available | Query Niagara Systems by path or name. |
+| Niagara MCP | `niagara_read_summary` | Available | Read Niagara system, emitter, renderer, user parameter, and module summaries. |
+| Niagara MCP | `niagara_read_module` | Available | Read one Niagara module node and its pins. |
+| Niagara MCP | `niagara_export_text` | Available | Export deterministic Niagara text. |
+| Niagara MCP | `niagara_merge_write` | Available | Union-write Niagara properties; does not handle deletion. |
+| Niagara MCP | `niagara_set_module_pin` | Available | Write one Niagara FunctionCall module input pin default; linked pins are rejected by default. |
+| Niagara MCP | `niagara_set_emitter_enabled` | Available | Explicitly enable or disable one Niagara emitter handle. |
+| Niagara MCP | `niagara_delete` | Available | Explicitly delete renderers, user parameters, disable emitters, etc. |
+| Batch FX MCP | `batch_fx_read_renderer_defaults` | Available | Read `AMassBattleFxRenderer` Blueprint defaults inherited by newly placed actors. |
+| Batch FX MCP | `batch_fx_set_renderer_defaults` | Available | Set `AMassBattleFxRenderer` Blueprint defaults, including `NiagaraSystemAsset`, `NDC_BurstFx`, `SubType`, batch size, and pooling cooldown. |
 
-批处理 FX 的闭环是：读取/复制参考特效资产，准备 batched Niagara/NDC/Renderer 蓝图，MCP 写入并验证 renderer 蓝图默认值，由用户把 renderer actor 放进测试关卡，再用 Unit MCP 把 `FFxConfig` 写入 `Hit.SpawnFx`、`Death.SpawnFx`、`Attack.SpawnFx` 等数组。MCP 不负责自动修改当前关卡布局；只要用户不在关卡里覆盖实例参数，拖进去的 actor 应继承资产默认值。
+The batch FX loop is: read or duplicate reference effect assets, prepare batched Niagara/NDC/Renderer Blueprints, let MCP write and verify renderer Blueprint defaults, have the user place the renderer actor in a test level, then use Unit MCP to write `FFxConfig` into arrays such as `Hit.SpawnFx`, `Death.SpawnFx`, and `Attack.SpawnFx`. MCP does not automatically modify the current level layout. As long as the user does not override instance parameters in the level, newly placed actors should inherit asset defaults.
 
-## 默认风格与模板化工作流
+## Default Style And Template-Based Workflow
 
-默认风格 profile 位于 `Resources/UnitManagementStyles/default.massbattle_unit_style.json`。
-它不是运行时功能，而是给 AI 和 MCP 工具使用的制作上下文：扫描根目录、单位组织规则、单位 authoring 默认值，以及批处理 FX 模板。
+The default style profile is `Resources/UnitManagementStyles/default.massbattle_unit_style.json`.
+It is not a runtime feature. It is authoring context for AI and MCP tools: scan roots, unit organization rules, unit authoring defaults, and batch FX templates.
+When `unit_create` does not receive `template_unit`, it reads `authoring_defaults.default_unit_template` as the default unit template. Configure that path before using default-template creation.
 
-批处理 FX 不应该从空白资产开始。推荐流程是：
+Batch FX should not start from blank assets. Recommended flow:
 
-1. 用 `editor_get_profile` 读取 `style/default`。
-2. 从 `batch_fx_templates` 选择最接近目标的模板，例如 `mesh_burst_hit`、`sprite_explosion_burst`、`projectile_muzzle_burst`。
-3. 用 `effect_duplicate_asset` 复制模板 Niagara 和 renderer Blueprint。
-4. 用 `niagara_set_emitter_enabled` / `niagara_delete` 关闭不需要的 emitter。
-5. 用 `niagara_merge_write` 写 renderer、emitter data、bounds 等 UObject 属性。
-6. 用 `niagara_set_module_pin` 微调模块输入 pin，例如 Lifetime、Scale、Spawn Count 或随机范围。
-7. 用 `batch_fx_set_renderer_defaults` 写 renderer CDO 的 Niagara、NDC、SubType 和 batch size。
-8. 用 `unit_plan_merge_update` / `unit_apply_plan` 把单位 `FFxConfig` 指向对应 `SubType`。
+1. Read `style/default` with `editor_get_profile`.
+2. Choose the closest template from `batch_fx_templates`, such as `mesh_burst_hit`, `sprite_explosion_burst`, or `projectile_muzzle_burst`.
+3. Duplicate the template Niagara and renderer Blueprint with `effect_duplicate_asset`.
+4. Disable unnecessary emitters with `niagara_set_emitter_enabled` / `niagara_delete`.
+5. Write renderer, emitter data, bounds, and other UObject properties with `niagara_merge_write`.
+6. Fine-tune module input pins such as Lifetime, Scale, Spawn Count, or random ranges with `niagara_set_module_pin`.
+7. Write renderer CDO Niagara, NDC, SubType, and batch size with `batch_fx_set_renderer_defaults`.
+8. Use `unit_write` to point unit `FFxConfig` entries to the corresponding `SubType`.
 
-这个模式和代码 diff 类似：模板表达大部分结构，MCP 只做可复查的小改动。
+This pattern is similar to a code diff: templates carry most of the structure, and MCP performs small reviewable edits.

@@ -213,7 +213,7 @@ FString UMassBattleMCPBridge::ExecuteCommand(const FString& CommandType, const T
 		Promise.SetValue(InternalExecuteCommand(CommandType, Params));
 	});
 
-	if (Future.WaitFor(FTimespan::FromSeconds(10.0)))
+	if (Future.WaitFor(FTimespan::FromSeconds(120.0)))
 	{
 		return Future.Get();
 	}
@@ -233,11 +233,11 @@ FString UMassBattleMCPBridge::InternalExecuteCommand(const FString& CommandType,
 	if (CommandType == TEXT("MCP_UnitGet")) { return UMassBattleUnitMCPApi::MCP_UnitGet(StringParam(Params, TEXT("UnitPath")), JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_UnitGetSchema")) { return UMassBattleUnitMCPApi::MCP_UnitGetSchema(JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_UnitExport")) { return UMassBattleUnitMCPApi::MCP_UnitExport(JsonParam(Params, TEXT("OptionsJson"))); }
-	if (CommandType == TEXT("MCP_UnitPlanMergeUpdate")) { return UMassBattleUnitMCPApi::MCP_UnitPlanMergeUpdate(StringParam(Params, TEXT("UnitPath")), JsonParam(Params, TEXT("UnitDataJson"))); }
 	if (CommandType == TEXT("MCP_UnitMergeUpdate")) { return UMassBattleUnitMCPApi::MCP_UnitMergeUpdate(StringParam(Params, TEXT("UnitPath")), JsonParam(Params, TEXT("UnitDataJson")), BoolParam(Params, TEXT("bSaveAssets"))); }
-	if (CommandType == TEXT("MCP_UnitPreviewDiff")) { return UMassBattleUnitMCPApi::MCP_UnitPreviewDiff(StringParam(Params, TEXT("PlanId"))); }
-	if (CommandType == TEXT("MCP_UnitApplyPlan")) { return UMassBattleUnitMCPApi::MCP_UnitApplyPlan(StringParam(Params, TEXT("PlanId")), BoolParam(Params, TEXT("bSaveAssets"))); }
+	if (CommandType == TEXT("MCP_UnitCreate")) { return UMassBattleUnitMCPApi::MCP_UnitCreate(JsonParam(Params, TEXT("CreateSpecJson")), BoolParam(Params, TEXT("bSaveAssets"), true)); }
 	if (CommandType == TEXT("MCP_UnitFindAssets")) { return UMassBattleUnitMCPApi::MCP_UnitFindAssets(JsonParam(Params, TEXT("QueryJson"))); }
+	if (CommandType == TEXT("MCP_UnitDeleteSoft")) { return UMassBattleUnitMCPApi::MCP_UnitDeleteSoft(StringParam(Params, TEXT("UnitPath")), JsonParam(Params, TEXT("OptionsJson"))); }
+	if (CommandType == TEXT("MCP_UnitDelete")) { return UMassBattleUnitMCPApi::MCP_UnitDelete(StringParam(Params, TEXT("UnitPath")), JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_StyleSummarizeUnits")) { return UMassBattleStyleMCPApi::MCP_StyleSummarizeUnits(JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_StylePlanOrganizeUnits")) { return UMassBattleStyleMCPApi::MCP_StylePlanOrganizeUnits(JsonParam(Params, TEXT("OptionsJson"))); }
 

@@ -2685,19 +2685,14 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 
 	FString TemplateUnitPath;
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("template_unit"), TEXT("source_unit") }, TemplateUnitPath);
-	TSharedPtr<FJsonObject> ClonePlan;
+	TSharedPtr<FJsonObject> UnitCreateSpec;
 	if (!TemplateUnitPath.IsEmpty())
 	{
-		TSharedPtr<FJsonObject> CloneSpec = MakeShared<FJsonObject>();
-		CloneSpec->SetStringField(TEXT("template_unit"), TemplateUnitPath);
-		CloneSpec->SetStringField(TEXT("asset_name"), UnitAssetName);
-		CloneSpec->SetStringField(TEXT("package_path"), UnitPackagePath);
-		const FString ClonePlanResult = UMassBattleUnitMCPApi::MCP_UnitPlanCreate(MassBattleUnitEditorMCP::ToJsonString(CloneSpec));
-		ClonePlan = MassBattleUnitEditorMCP::ParseObject(ClonePlanResult);
-		if (ClonePlan.IsValid())
-		{
-			Discovery->SetObjectField(TEXT("unit_clone_plan"), ClonePlan);
-		}
+		UnitCreateSpec = MakeShared<FJsonObject>();
+		UnitCreateSpec->SetStringField(TEXT("template_unit"), TemplateUnitPath);
+		UnitCreateSpec->SetStringField(TEXT("asset_name"), UnitAssetName);
+		UnitCreateSpec->SetStringField(TEXT("package_path"), UnitPackagePath);
+		Discovery->SetObjectField(TEXT("unit_create_spec"), UnitCreateSpec);
 	}
 
 	FString ParentMaterialPath;
@@ -3239,24 +3234,22 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	}
 	else if (!TemplateUnitPath.IsEmpty())
 	{
-		const TSharedPtr<FJsonObject>* UnitClonePlan = nullptr;
-		if (Discovery->TryGetObjectField(TEXT("unit_clone_plan"), UnitClonePlan) && UnitClonePlan && UnitClonePlan->IsValid())
+		const TSharedPtr<FJsonObject>* UnitCreateSpec = nullptr;
+		if (Discovery->TryGetObjectField(TEXT("unit_create_spec"), UnitCreateSpec) && UnitCreateSpec && UnitCreateSpec->IsValid())
 		{
-			FString ClonePlanId;
-			(*UnitClonePlan)->TryGetStringField(TEXT("plan_id"), ClonePlanId);
 			const bool bUseExistingPlannedUnit = bOverwriteExisting && !PlannedUnitPath.IsEmpty() && MassBattleUnitEditorMCP::AssetExists(PlannedUnitPath);
 			if (bUseExistingPlannedUnit)
 			{
-				MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("clone_unit"), TEXT("MCP_UnitApplyPlan"), TEXT("skipped_existing"), TEXT("Planned unit already exists and overwrite_existing=true; applying merge patch to the existing unit."));
+				MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("create_unit"), TEXT("MCP_UnitCreate"), TEXT("skipped_existing"), TEXT("Planned unit already exists and overwrite_existing=true; applying merge patch to the existing unit."));
 			}
 			else
 			{
-				TSharedPtr<FJsonObject> CloneStep = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("clone_unit"), TEXT("MCP_UnitApplyPlan"), TEXT("running"), TEXT("Applying clone plan for the new unit DataAsset."));
-				const FString CloneApplyResult = UMassBattleUnitMCPApi::MCP_UnitApplyPlan(ClonePlanId, bSaveAssets);
-				MassBattleUnitEditorMCP::SetStepResult(CloneStep, CloneApplyResult);
-				TSharedPtr<FJsonObject> CloneApplyJson = MassBattleUnitEditorMCP::ParseObject(CloneApplyResult);
-				CloneStep->SetStringField(TEXT("status"), CloneApplyJson.IsValid() && CloneApplyJson->GetBoolField(TEXT("success")) ? TEXT("done") : TEXT("failed"));
-				if (!CloneApplyJson.IsValid() || !CloneApplyJson->GetBoolField(TEXT("success")))
+				TSharedPtr<FJsonObject> CreateStep = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("create_unit"), TEXT("MCP_UnitCreate"), TEXT("running"), TEXT("Creating the new unit DataAsset."));
+				const FString CreateResult = UMassBattleUnitMCPApi::MCP_UnitCreate(MassBattleUnitEditorMCP::ToJsonString(*UnitCreateSpec), bSaveAssets);
+				MassBattleUnitEditorMCP::SetStepResult(CreateStep, CreateResult);
+				TSharedPtr<FJsonObject> CreateJson = MassBattleUnitEditorMCP::ParseObject(CreateResult);
+				CreateStep->SetStringField(TEXT("status"), CreateJson.IsValid() && CreateJson->GetBoolField(TEXT("success")) ? TEXT("done") : TEXT("failed"));
+				if (!CreateJson.IsValid() || !CreateJson->GetBoolField(TEXT("success")))
 				{
 					Root->SetBoolField(TEXT("success"), false);
 					Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
@@ -3297,7 +3290,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		}
 		else
 		{
-			MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("clone_unit"), TEXT("MCP_UnitApplyPlan"), TEXT("blocked"), TEXT("Plan did not contain a unit_clone_plan."));
+			MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("create_unit"), TEXT("MCP_UnitCreate"), TEXT("blocked"), TEXT("Plan did not contain a unit_create_spec."));
 		}
 	}
 	else

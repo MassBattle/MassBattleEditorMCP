@@ -64,6 +64,7 @@ void FMassBattleMCPServerRunnable::HandleClientConnection(FSocket* InClientSocke
 	const int32 MaxBufferSize = 4096;
 	uint8 Buffer[MaxBufferSize];
 	TArray<uint8> PendingData;
+	const FDateTime Deadline = FDateTime::UtcNow() + FTimespan::FromSeconds(5.0);
 
 	while (bRunning && InClientSocket)
 	{
@@ -90,6 +91,14 @@ void FMassBattleMCPServerRunnable::HandleClientConnection(FSocket* InClientSocke
 			}
 		}
 		else if (!bReadSuccess)
+		{
+			if (FDateTime::UtcNow() > Deadline)
+			{
+				break;
+			}
+			FPlatformProcess::Sleep(0.001f);
+		}
+		else if (BytesRead == 0)
 		{
 			break;
 		}

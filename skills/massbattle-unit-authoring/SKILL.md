@@ -11,14 +11,14 @@ Use UE editor APIs, commandlets, or the MassBattleEditorMCP tools. Do not edit `
 
 1. List or locate units with the Unit MCP discovery tools, scoped to style roots such as `/Game/Unit`, `/Game/Toon_Soldiers_WW2`, `/Game/StylizedArmyPackA`, and `/Game/World_Flags`.
 2. Read normal unit data with simple JSON first. Request detailed mode or a specific object only for complex fields such as `Attack`, `Visualize`, `LODShared`, or `AnimShared`.
-3. Apply edits through `MCP_UnitPlanMergeUpdate` then `MCP_UnitApplyPlan`; omitted fields must remain unchanged. Use `MCP_UnitDelete` for planned deletes.
+3. Apply edits through `unit_write`; omitted fields must remain unchanged. Use `unit_delete` for explicit deletes.
 4. For array fields such as `Attack.SpawnProjectile`, `Attack.SpawnFx`, and `Attack.PlaySound`, union merge can append missing elements by default. Pass `append_arrays=false` only when append should be rejected.
 
 ## Create Unit
 
 1. Discover source assets first: source skeletal mesh, compatible renderer Blueprint class, Niagara system, material/skin, animation search roots, and a template unit.
-2. Use `MCP_EditorPlanCreateVatUnit` to build the plan, inspect missing fields and warnings, then run `MCP_EditorValidateCreateVatUnit`.
-3. Apply with `MCP_EditorApplyCreateVatUnit` only after validation is valid. Use `overwrite_existing=true` for repeatable editor runs; existing planned units are patched, missing units are cloned from the template.
+2. Use `unit_create` when a new unit DataAsset is needed; omit `template_unit` only when the project default template is configured.
+3. Use editor VAT tools only for the mesh/material/renderer authoring steps that cannot be expressed as unit reads, creates, writes, or deletes.
 4. Read back the generated unit with `MCP_UnitGet` and verify asset existence, renderer class, material slot, attack enabled state, projectile/effect arrays, range, damage, and subtype.
 
 ## Defaults
@@ -28,6 +28,59 @@ Use style defaults for boilerplate: package roots, family naming, renderer/LOD d
 - `material_overrides` for skins or flag/country variants.
 - `source_renderer_class` and `niagara_system` for renderer binding.
 - `unit_patch` for gameplay changes such as `SubType`, `Trace`, `Attack`, `Damage`, and `Visualize`.
+
+## Balance Baseline (Confirmed)
+
+Project scale definition for this game:
+
+- `1 格 = 16 uu = 1 km`
+- Use old-game "格/秒" as balance baseline and convert to runtime uu/second.
+
+### Movement formula
+
+1. Let `H_kmh` be historical speed in km/h.
+2. `v = H_kmh / 3.6` (m/s).
+3. `Move格/秒 = 16 × ln(1 + v) / ln(1 + 4 / 3.6)`
+4. `Move uu/秒 = 16 × Move格/秒`
+
+This keeps:
+- 步兵 4 km/h -> 16 格/秒 -> 256 uu/秒 (old 1.00)
+- 坦克 40 km/h -> 53.4 格/秒 -> 854 uu/秒 (old ~3.34)
+
+Old unit scale check:
+- `Move_旧格每秒 = Move格每秒 / 16`
+
+### Range formula
+
+1. Let `R_m` be effective combat range in meters.
+2. `Range_格 = 64 × ln(1 + R_m / 10) / ln(1 + 500 / 10)`
+3. `Range uu = 16 × Range_格`
+
+This keeps:
+- 步兵 500m -> 64 格 -> 1024 uu (old 4.00)
+- 5.8km炮兵有效射程 -> ~113 格 -> ~1800 uu (old ~7.1)
+
+Old unit scale check:
+- `Range_旧格 = Range_格 / 16`
+
+### Runtime mobility-firing hard rule
+
+To prevent indefinite tank kiting, apply movement-fire penalties when a unit is moving and firing:
+- `Range_移动开火 = 原射程 × 0.6`
+- `Damage_移动开火 = 原伤害 × 0.5`
+
+This is a gameplay rule for balance, not a replacement formula.
+
+When adjusting infantry (Japanese, China, UK, Soviet, Germany, etc.):
+
+1. Find the unit by `unit_list` (scope your style roots).
+2. Read unit in simple mode (`unit_get`) and capture required fields.
+3. Build `unit_patch` with new `Move.XY.MoveSpeed` and `Attack.Range` in uu.
+4. Apply via `unit_write`.
+5. Verify with `unit_get`.
+
+Example:
+- 步兵（H=4, R=500）=> `MoveSpeed=256`，`Attack.Range=1024`
 
 Known validated examples in Winyunq:
 

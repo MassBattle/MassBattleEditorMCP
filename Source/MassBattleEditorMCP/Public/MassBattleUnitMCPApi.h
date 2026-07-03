@@ -35,43 +35,34 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitExport(const FString& OptionsJson);
 
-	/** Create a non-destructive update plan from JSON patches. */
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
+	/** Internal helper for update diff/apply implementation; not part of the public MCP surface. */
 	static FString MCP_UnitPlanUpdate(const FString& UnitPath, const FString& PatchJson);
 
-	/** Create a non-destructive update plan by union-merging a partial source-aligned unit JSON object. */
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
+	/** Internal helper for union-write diff/apply implementation; not part of the public MCP surface. */
 	static FString MCP_UnitPlanMergeUpdate(const FString& UnitPath, const FString& UnitDataJson);
 
 	/** Convenience wrapper: union-merge a partial source-aligned unit JSON object and optionally save. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitMergeUpdate(const FString& UnitPath, const FString& UnitDataJson, bool bSaveAssets);
 
-	/** Create a non-destructive clone/create plan from a template unit and JSON patches. */
+	/** Create a new unit DataAsset from the default or specified template, then optionally apply initial unit data. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
-	static FString MCP_UnitPlanCreate(const FString& CreateSpecJson);
+	static FString MCP_UnitCreate(const FString& CreateSpecJson, bool bSaveAssets);
 
-	/** Read a saved plan and return its diff. */
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
+	/** Internal helper for editor workflow code; not part of the public MCP surface. */
 	static FString MCP_UnitPreviewDiff(const FString& PlanId);
 
-	/** Apply a saved plan. This is the only unit edit endpoint that mutates assets. */
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
+	/** Internal helper for editor workflow code; not part of the public MCP surface. */
 	static FString MCP_UnitApplyPlan(const FString& PlanId, bool bSaveAssets);
-
-	/** Convenience wrapper: clone a template, patch it, and save. Prefer plan_create + apply_plan for reviewable workflows. */
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
-	static FString MCP_UnitClone(const FString& SourceUnitPath, const FString& NewAssetName, const FString& PackagePath, const FString& PatchJson);
 
 	/** Move a unit asset into a dated trash folder after reporting referencers. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitDeleteSoft(const FString& UnitPath, const FString& OptionsJson);
 
-	/** Create a non-destructive delete plan. Soft delete is the default; hard delete requires explicit options. */
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
+	/** Internal helper for delete implementation; not part of the public MCP surface. */
 	static FString MCP_UnitPlanDelete(const FString& UnitPath, const FString& OptionsJson);
 
-	/** Convenience wrapper: delete a unit by plan. Defaults to dry_run=true. */
+	/** Delete or soft-delete a unit explicitly. Defaults to dry_run=true. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitDelete(const FString& UnitPath, const FString& OptionsJson);
 

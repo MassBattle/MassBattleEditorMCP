@@ -135,26 +135,29 @@ async def unit_export(options: Any = None) -> Dict[str, Any]:
 
 
 @mcp.tool()
-async def unit_plan_merge_update(unit_path: str, unit_data: Any) -> Dict[str, Any]:
-    """Create a non-destructive union-merge plan for a MassBattle unit."""
+async def unit_write(unit_path: str, unit_data: Any, save_assets: bool = True) -> Dict[str, Any]:
+    """Union-write partial MassBattle unit data to an existing unit."""
     return await get_connection().send_command(
-        "MCP_UnitPlanMergeUpdate",
-        {"UnitPath": unit_path, "UnitDataJson": _json_arg(unit_data)},
+        "MCP_UnitMergeUpdate",
+        {"UnitPath": unit_path, "UnitDataJson": _json_arg(unit_data), "bSaveAssets": save_assets},
     )
 
 
 @mcp.tool()
-async def unit_preview_diff(plan_id: str) -> Dict[str, Any]:
-    """Read the diff for a saved MassBattle unit plan."""
-    return await get_connection().send_command("MCP_UnitPreviewDiff", {"PlanId": plan_id})
+async def unit_create(create_spec: Any, save_assets: bool = True) -> Dict[str, Any]:
+    """Create a MassBattle unit from the default or specified template."""
+    return await get_connection().send_command(
+        "MCP_UnitCreate",
+        {"CreateSpecJson": _json_arg(create_spec), "bSaveAssets": save_assets},
+    )
 
 
 @mcp.tool()
-async def unit_apply_plan(plan_id: str, save_assets: bool = True) -> Dict[str, Any]:
-    """Apply a reviewed MassBattle unit plan."""
+async def unit_delete(unit_path: str, options: Any = None) -> Dict[str, Any]:
+    """Delete or soft-delete a MassBattle unit; options default to dry_run=true."""
     return await get_connection().send_command(
-        "MCP_UnitApplyPlan",
-        {"PlanId": plan_id, "bSaveAssets": save_assets},
+        "MCP_UnitDelete",
+        {"UnitPath": unit_path, "OptionsJson": _json_arg(options)},
     )
 
 

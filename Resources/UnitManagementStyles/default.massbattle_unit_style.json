@@ -128,6 +128,7 @@
   },
   "authoring_defaults": {
     "recipe_id": "vat_skeletal_unit",
+    "default_unit_template": "",
     "source_folder_name": "Source_{asset_slug}",
     "generated_folder_name": "Gen_{asset_slug}",
     "unit_asset_prefix": "AgentConfig_",

@@ -16,6 +16,7 @@
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
+#include "Misc/Paths.h"
 #include "NiagaraSystem.h"
 #include "ObjectTools.h"
 #include "Renderers/MassBattleAgentRenderer.h"
@@ -1492,6 +1493,91 @@ static UObject* DuplicateAsset(const FString& SourcePath, const FString& NewAsse
 	return NewAsset;
 }
 
+static FString ResolveDefaultUnitTemplatePath(FString& OutError)
+{
+	const FString StylePath = FPaths::Combine(
+		FPaths::ProjectPluginsDir(),
+		TEXT("MassBattleEditorMCP"),
+		TEXT("Resources"),
+		TEXT("UnitManagementStyles"),
+		TEXT("default.massbattle_unit_style.json"));
+
+	FString JsonText;
+	if (!FFileHelper::LoadFileToString(JsonText, *StylePath))
+	{
+		OutError = FString::Printf(TEXT("Failed to read default unit style profile: %s"), *StylePath);
+		return FString();
+	}
+
+	TSharedPtr<FJsonObject> Style = ParseObject(JsonText);
+	if (!Style.IsValid())
+	{
+		OutError = FString::Printf(TEXT("Default unit style profile is not valid JSON: %s"), *StylePath);
+		return FString();
+	}
+
+	const TSharedPtr<FJsonObject>* AuthoringDefaults = nullptr;
+	if (!Style->TryGetObjectField(TEXT("authoring_defaults"), AuthoringDefaults) || !AuthoringDefaults || !AuthoringDefaults->IsValid())
+	{
+		OutError = TEXT("Default unit style profile does not define authoring_defaults.default_unit_template");
+		return FString();
+	}
+
+	FString TemplatePath;
+	(*AuthoringDefaults)->TryGetStringField(TEXT("default_unit_template"), TemplatePath);
+	if (TemplatePath.IsEmpty())
+	{
+		OutError = TEXT("Default unit template is not configured. Set authoring_defaults.default_unit_template or pass template_unit.");
+	}
+	return TemplatePath;
+}
+
+static bool ResolveCreateTarget(const TSharedPtr<FJsonObject>& Spec, FString& OutAssetName, FString& OutPackagePath, FString& OutUnitPath, FString& OutError)
+{
+	Spec->TryGetStringField(TEXT("asset_name"), OutAssetName);
+	Spec->TryGetStringField(TEXT("package_path"), OutPackagePath);
+	Spec->TryGetStringField(TEXT("unit_path"), OutUnitPath);
+	Spec->TryGetStringField(TEXT("target_unit"), OutUnitPath);
+	Spec->TryGetStringField(TEXT("new_unit_path"), OutUnitPath);
+
+	if ((!OutAssetName.IsEmpty() && !OutPackagePath.IsEmpty()) || OutUnitPath.IsEmpty())
+	{
+		if (OutAssetName.IsEmpty() || OutPackagePath.IsEmpty())
+		{
+			OutError = TEXT("Create spec requires either unit_path/new_unit_path or both asset_name and package_path");
+			return false;
+		}
+		OutUnitPath = OutPackagePath / OutAssetName + TEXT(".") + OutAssetName;
+		return true;
+	}
+
+	FString ObjectPath = OutUnitPath;
+	FString PackageName;
+	FString ObjectName;
+	if (!ObjectPath.Split(TEXT("."), &PackageName, &ObjectName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+	{
+		ObjectName = FPackageName::GetLongPackageAssetName(ObjectPath);
+		PackageName = ObjectPath;
+	}
+
+	if (ObjectName.IsEmpty())
+	{
+		OutError = FString::Printf(TEXT("Could not resolve asset name from unit_path: %s"), *OutUnitPath);
+		return false;
+	}
+
+	FString ParentPath;
+	if (!PackageName.Split(TEXT("/"), &ParentPath, &OutAssetName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+	{
+		OutError = FString::Printf(TEXT("Could not resolve package path from unit_path: %s"), *OutUnitPath);
+		return false;
+	}
+
+	OutPackagePath = ParentPath;
+	OutUnitPath = OutPackagePath / OutAssetName + TEXT(".") + OutAssetName;
+	return true;
+}
+
 static TSharedPtr<FJsonObject> BuildPlanBase(const FString& Type)
 {
 	TSharedPtr<FJsonObject> Plan = MakeShared<FJsonObject>();
@@ -2365,7 +2451,7 @@ FString UMassBattleUnitMCPApi::MCP_UnitMergeUpdate(const FString& UnitPath, cons
 	return MCP_UnitApplyPlan(PlanId, bSaveAssets);
 }
 
-FString UMassBattleUnitMCPApi::MCP_UnitPlanCreate(const FString& CreateSpecJson)
+FString UMassBattleUnitMCPApi::MCP_UnitCreate(const FString& CreateSpecJson, bool bSaveAssets)
 {
 	TSharedPtr<FJsonObject> Spec = ParseObject(CreateSpecJson);
 	if (!Spec.IsValid())
@@ -2374,50 +2460,85 @@ FString UMassBattleUnitMCPApi::MCP_UnitPlanCreate(const FString& CreateSpecJson)
 	}
 
 	FString TemplatePath;
-	FString NewAssetName;
-	FString PackagePath;
 	Spec->TryGetStringField(TEXT("template_unit"), TemplatePath);
 	Spec->TryGetStringField(TEXT("source_unit"), TemplatePath);
-	Spec->TryGetStringField(TEXT("asset_name"), NewAssetName);
-	Spec->TryGetStringField(TEXT("package_path"), PackagePath);
-
-	if (TemplatePath.IsEmpty() || NewAssetName.IsEmpty() || PackagePath.IsEmpty())
+	if (TemplatePath.IsEmpty())
 	{
-		return MakeErrorJson(TEXT("Create spec requires template_unit/source_unit, asset_name, and package_path"));
+		FString TemplateError;
+		TemplatePath = ResolveDefaultUnitTemplatePath(TemplateError);
+		if (TemplatePath.IsEmpty())
+		{
+			return MakeErrorJson(TemplateError);
+		}
 	}
 
+	FString AssetName;
+	FString PackagePath;
+	FString UnitPath;
 	FString Error;
-	UMassBattleAgentConfigDataAsset* Template = LoadUnit(TemplatePath, Error);
-	if (!Template)
+	if (!ResolveCreateTarget(Spec, AssetName, PackagePath, UnitPath, Error))
 	{
 		return MakeErrorJson(Error);
 	}
 
-	TArray<TSharedPtr<FJsonObject>> Patches = GetPatchObjects(Spec);
-	bool bHasError = false;
-	TArray<TSharedPtr<FJsonValue>> Diff = BuildPatchDiffArray(Template, Patches, bHasError);
+	if (LoadObject<UObject>(nullptr, *UnitPath))
+	{
+		return MakeErrorJson(FString::Printf(TEXT("Target unit already exists: %s"), *UnitPath));
+	}
 
-	TSharedPtr<FJsonObject> Plan = BuildPlanBase(TEXT("create_unit_from_template"));
-	Plan->SetStringField(TEXT("template_path"), Template->GetPathName());
-	Plan->SetStringField(TEXT("asset_name"), NewAssetName);
-	Plan->SetStringField(TEXT("package_path"), PackagePath);
-	Plan->SetStringField(TEXT("new_asset_path"), PackagePath / NewAssetName + TEXT(".") + NewAssetName);
-	Plan->SetArrayField(TEXT("patches"), CopyPatchesToJsonValues(Patches));
-	Plan->SetArrayField(TEXT("diff_from_template"), Diff);
-	Plan->SetBoolField(TEXT("applicable"), !bHasError);
-
-	FString PlanPath;
-	if (!SavePlan(Plan, PlanPath, Error))
+	UObject* NewUnit = DuplicateAsset(TemplatePath, AssetName, PackagePath, Error);
+	if (!NewUnit)
 	{
 		return MakeErrorJson(Error);
 	}
+
+	TArray<TSharedPtr<FJsonValue>> AppliedDiffs;
+	TArray<TSharedPtr<FJsonValue>> MergeErrors;
+	const TSharedPtr<FJsonObject>* InitialData = nullptr;
+	if (Spec->TryGetObjectField(TEXT("unit_data"), InitialData) || Spec->TryGetObjectField(TEXT("initial_unit_data"), InitialData))
+	{
+		TSharedPtr<FJsonObject> Options = ExtractMergeOptions(*InitialData);
+		TArray<TSharedPtr<FJsonObject>> Patches = BuildUnionMergePatches(Cast<UMassBattleAgentConfigDataAsset>(NewUnit), *InitialData, Options, MergeErrors);
+		if (!MergeErrors.IsEmpty())
+		{
+			TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+			Root->SetBoolField(TEXT("success"), false);
+			Root->SetStringField(TEXT("error"), TEXT("Create-time unit data contains non-mergeable fields"));
+			Root->SetArrayField(TEXT("merge_errors"), MergeErrors);
+			return ToJsonString(Root);
+		}
+
+		for (const TSharedPtr<FJsonObject>& Patch : Patches)
+		{
+			FPatchPreview Preview;
+			if (!ApplyPatch(NewUnit, Patch, false, Preview))
+			{
+				return MakeErrorJson(Preview.Error);
+			}
+			AppliedDiffs.Add(MakeShared<FJsonValueObject>(PatchPreviewToJson(Preview)));
+		}
+	}
+
+	if (bSaveAssets && !SaveAsset(NewUnit, Error))
+	{
+		return MakeErrorJson(Error);
+	}
+
+	TSharedPtr<FJsonObject> Audit = MakeShared<FJsonObject>();
+	Audit->SetStringField(TEXT("timestamp_utc"), FDateTime::UtcNow().ToIso8601());
+	Audit->SetStringField(TEXT("type"), TEXT("create_unit"));
+	Audit->SetStringField(TEXT("template_path"), TemplatePath);
+	Audit->SetStringField(TEXT("asset_path"), NewUnit->GetPathName());
+	Audit->SetArrayField(TEXT("diff"), AppliedDiffs);
+	AppendAuditRecord(Audit);
 
 	TSharedPtr<FJsonObject> Root = MakeSuccess();
-	Root->SetStringField(TEXT("plan_id"), Plan->GetStringField(TEXT("plan_id")));
-	Root->SetStringField(TEXT("plan_path"), PlanPath);
-	Root->SetBoolField(TEXT("applicable"), !bHasError);
-	Root->SetStringField(TEXT("new_asset_path"), Plan->GetStringField(TEXT("new_asset_path")));
-	Root->SetArrayField(TEXT("diff_from_template"), Diff);
+	Root->SetStringField(TEXT("operation"), TEXT("create_unit"));
+	Root->SetStringField(TEXT("template_path"), TemplatePath);
+	Root->SetStringField(TEXT("asset_path"), NewUnit->GetPathName());
+	Root->SetBoolField(TEXT("created"), true);
+	Root->SetBoolField(TEXT("saved"), bSaveAssets);
+	Root->SetArrayField(TEXT("applied_diff"), AppliedDiffs);
 	return ToJsonString(Root);
 }
 
@@ -2495,20 +2616,6 @@ FString UMassBattleUnitMCPApi::MCP_UnitApplyPlan(const FString& PlanId, bool bSa
 			return MakeErrorJson(Error);
 		}
 	}
-	else if (Type == TEXT("create_unit_from_template"))
-	{
-		FString TemplatePath;
-		FString NewAssetName;
-		FString PackagePath;
-		Plan->TryGetStringField(TEXT("template_path"), TemplatePath);
-		Plan->TryGetStringField(TEXT("asset_name"), NewAssetName);
-		Plan->TryGetStringField(TEXT("package_path"), PackagePath);
-		Target = DuplicateAsset(TemplatePath, NewAssetName, PackagePath, Error);
-		if (!Target)
-		{
-			return MakeErrorJson(Error);
-		}
-	}
 	else
 	{
 		return MakeErrorJson(FString::Printf(TEXT("Unsupported plan type: %s"), *Type));
@@ -2553,28 +2660,6 @@ FString UMassBattleUnitMCPApi::MCP_UnitApplyPlan(const FString& PlanId, bool bSa
 	Root->SetBoolField(TEXT("saved"), bSaveAssets);
 	Root->SetArrayField(TEXT("applied_diff"), AppliedDiffs);
 	return ToJsonString(Root);
-}
-
-FString UMassBattleUnitMCPApi::MCP_UnitClone(const FString& SourceUnitPath, const FString& NewAssetName, const FString& PackagePath, const FString& PatchJson)
-{
-	TSharedPtr<FJsonObject> Spec = ParseObject(PatchJson);
-	if (!Spec.IsValid())
-	{
-		return MakeErrorJson(TEXT("PatchJson is not valid JSON"));
-	}
-	Spec->SetStringField(TEXT("template_unit"), SourceUnitPath);
-	Spec->SetStringField(TEXT("asset_name"), NewAssetName);
-	Spec->SetStringField(TEXT("package_path"), PackagePath);
-
-	const FString PlanResult = MCP_UnitPlanCreate(ToJsonString(Spec));
-	TSharedPtr<FJsonObject> PlanResultJson = ParseObject(PlanResult);
-	if (!PlanResultJson.IsValid() || !PlanResultJson->GetBoolField(TEXT("success")))
-	{
-		return PlanResult;
-	}
-
-	const FString PlanId = PlanResultJson->GetStringField(TEXT("plan_id"));
-	return MCP_UnitApplyPlan(PlanId, true);
 }
 
 FString UMassBattleUnitMCPApi::MCP_UnitDeleteSoft(const FString& UnitPath, const FString& OptionsJson)
@@ -2841,15 +2926,10 @@ FString UMassBattleUnitMCPApi::MCP_UnitGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_UnitGet"), TEXT("unit.query"), TEXT("Get one unit with default ignore policy.")));
 	Tools.Add(Tool(TEXT("MCP_UnitGetSchema"), TEXT("unit.schema"), TEXT("Expose editable schema and field roles.")));
 	Tools.Add(Tool(TEXT("MCP_UnitExport"), TEXT("unit.export"), TEXT("Export balance fields to CSV/JSON.")));
-	Tools.Add(Tool(TEXT("MCP_UnitPlanUpdate"), TEXT("unit.edit"), TEXT("Create non-destructive property patch plan.")));
-	Tools.Add(Tool(TEXT("MCP_UnitPlanMergeUpdate"), TEXT("unit.edit"), TEXT("Create non-destructive union-merge update plan from partial source-aligned JSON.")));
-	Tools.Add(Tool(TEXT("MCP_UnitMergeUpdate"), TEXT("unit.edit"), TEXT("Union-merge partial source-aligned JSON and optionally save.")));
-	Tools.Add(Tool(TEXT("MCP_UnitPlanCreate"), TEXT("unit.create"), TEXT("Plan clone-from-template unit creation.")));
-	Tools.Add(Tool(TEXT("MCP_UnitPreviewDiff"), TEXT("unit.edit"), TEXT("Read saved plan diff.")));
-	Tools.Add(Tool(TEXT("MCP_UnitApplyPlan"), TEXT("unit.edit"), TEXT("Apply reviewed plan and write audit log.")));
+	Tools.Add(Tool(TEXT("MCP_UnitCreate"), TEXT("unit.create"), TEXT("Create a unit from the default or specified template, then optionally apply initial unit data.")));
+	Tools.Add(Tool(TEXT("MCP_UnitMergeUpdate"), TEXT("unit.write"), TEXT("Union-write partial source-aligned JSON to an existing unit and optionally save.")));
 	Tools.Add(Tool(TEXT("MCP_UnitDeleteSoft"), TEXT("unit.lifecycle"), TEXT("Move a unit to trash after referencer scan.")));
-	Tools.Add(Tool(TEXT("MCP_UnitPlanDelete"), TEXT("unit.lifecycle"), TEXT("Create a reviewable unit delete plan.")));
-	Tools.Add(Tool(TEXT("MCP_UnitDelete"), TEXT("unit.lifecycle"), TEXT("Delete a unit by plan; dry_run=true by default.")));
+	Tools.Add(Tool(TEXT("MCP_UnitDelete"), TEXT("unit.delete"), TEXT("Delete a unit explicitly; dry_run=true by default.")));
 	Tools.Add(Tool(TEXT("MCP_UnitFindAssets"), TEXT("unit.assets"), TEXT("Find existing assets for unit generation.")));
 	Tools.Add(Tool(TEXT("MCP_StyleSummarizeUnits"), TEXT("style.query"), TEXT("Summarize style organization.")));
 	Tools.Add(Tool(TEXT("MCP_StylePlanOrganizeUnits"), TEXT("style.organize"), TEXT("Plan style-based folder organization.")));

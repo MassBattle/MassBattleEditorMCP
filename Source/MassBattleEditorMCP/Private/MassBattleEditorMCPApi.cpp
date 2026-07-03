@@ -1226,48 +1226,23 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("OptionsJson"),
 		TEXT("unit.export"));
 
-	AddTool(TEXT("MCP_UnitPlanUpdate"),
-		TEXT("为已有单位生成可审查的数据编辑计划，不直接改资产"),
-		TEXT("UnitPath, PatchJson"),
-		TEXT("unit.edit"));
-
-	AddTool(TEXT("MCP_UnitPlanMergeUpdate"),
-		TEXT("按源码字段名并集写入局部单位 JSON，只更新传入字段并生成可审查计划"),
-		TEXT("UnitPath, UnitDataJson"),
-		TEXT("unit.edit"));
-
 	AddTool(TEXT("MCP_UnitMergeUpdate"),
-		TEXT("并集写入局部单位 JSON 的便捷入口，可选择保存资产"),
+		TEXT("对已有单位并集写入局部 JSON，可选择保存资产"),
 		TEXT("UnitPath, UnitDataJson, bSaveAssets"),
-		TEXT("unit.edit"));
+		TEXT("unit.write"));
 
-	AddTool(TEXT("MCP_UnitPlanCreate"),
-		TEXT("基于模板单位生成克隆/创建计划，可用于后续批量生成单位"),
-		TEXT("CreateSpecJson"),
-		TEXT("unit.generate"));
-
-	AddTool(TEXT("MCP_UnitApplyPlan"),
-		TEXT("应用已保存的单位编辑或克隆计划"),
-		TEXT("PlanId, bSaveAssets"),
-		TEXT("unit.edit"));
-
-	AddTool(TEXT("MCP_UnitClone"),
-		TEXT("复制模板单位并应用 Patch 的便捷入口；推荐正式流程使用 plan_create + apply_plan"),
-		TEXT("SourceUnitPath, NewAssetName, PackagePath, PatchJson"),
-		TEXT("unit.generate"));
+	AddTool(TEXT("MCP_UnitCreate"),
+		TEXT("创建新单位；未指定模板时使用默认单位模板，可带初始单位数据"),
+		TEXT("CreateSpecJson, bSaveAssets"),
+		TEXT("unit.create"));
 
 	AddTool(TEXT("MCP_UnitDeleteSoft"),
 		TEXT("软删除单位：移动到 Trash 路径并返回引用者"),
 		TEXT("UnitPath, OptionsJson"),
 		TEXT("unit.delete"));
 
-	AddTool(TEXT("MCP_UnitPlanDelete"),
-		TEXT("生成单位删除计划；默认 soft，hard 删除需要显式参数"),
-		TEXT("UnitPath, OptionsJson"),
-		TEXT("unit.delete"));
-
 	AddTool(TEXT("MCP_UnitDelete"),
-		TEXT("按删除计划删除单位；默认 dry_run=true"),
+		TEXT("显式删除单位；默认 dry_run=true"),
 		TEXT("UnitPath, OptionsJson"),
 		TEXT("unit.delete"));
 
