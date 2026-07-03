@@ -12,9 +12,9 @@ When a plugin is good enough, hobbyists naturally start building around it. Mass
 
 If your game already has thousands of units, this ecosystem is valuable. The story above may be dry, but it is real: strong core technology attracts surrounding community tools. Alongside this MCP plugin, there are other community plugins around Mass Battle and RTS workflows:
 
-- [fogofwar](https://github.com/MassBattle/FogOfWar): fog of war; includes the minimap plugin.
-- landmark: landmark system, also usable as an editor tool.
-- openrtscamera: open-source RTS camera and RTS command panel.
+- [fogofwar](https://github.com/winyunq/FogOfWar): fog of war; includes the minimap plugin.
+- [landmark](https://github.com/winyunq/LandmarkSystem): landmark system, also usable as an editor tool.
+- [openrtscamera](https://github.com/winyunq/OpenRTSCamera): open-source RTS camera and RTS command panel.
 
 ## Plugin Positioning: Editor Tools For Large-Scale Mass Battle Workflows
 
