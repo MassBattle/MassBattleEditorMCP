@@ -12,9 +12,9 @@
 
 如果你的游戏单位规模已经上千，这套生态就很有价值。前面的故事也许无聊，但它是真的：足够好的核心技术会吸引社区继续补齐周边工具。除了这个 MCP 插件，你还能看到更多围绕 Mass Battle / RTS 工作流的社区插件：
 
-- [fogofwar](https://github.com/winyunq/FogOfWar)：战争迷雾；这里包含了小地图插件。
-- [landmark](https://github.com/winyunq/LandmarkSystem)：地标系统，也可以称之为编辑器。
-- [openrtscamera](https://github.com/winyunq/OpenRTSCamera)：开源相机，RTS 命令面板。
+- [fogofwar](https://github.com/winyunq/FogOfWar)：战争迷雾插件，包含小地图插件和场景迷雾插件。
+- [RTS InputSystem](https://github.com/winyunq/RTSInputSystem)：RTS 控制系统，包含 RTS 相机、可以在小地图上显示的镜头（可以与战争迷雾小地图联动），以及单位选择面板。
+- [landmark](https://github.com/winyunq/LandmarkSystem)：地编场景系统，包含在特定坐标显示地编文本、在特定地区生成建筑，以及在特定地点生成指定数量的 Mass Battle Frame 单位。
 
 ## 插件定位：服务于 Mass Battle 的大规模战斗插件
 
