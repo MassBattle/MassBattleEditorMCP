@@ -94,8 +94,8 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 | Unit Editor MCP | `editor_get_status` | 可用 | 读取单位编辑工作流能力。 |
 | Unit Editor MCP | `editor_list_profiles` | 可用 | 列出风格 profile 和 authoring recipe。 |
 | Unit Editor MCP | `editor_get_profile` | 可用 | 读取指定 profile 或 recipe。 |
-| Unit Editor MCP | `editor_plan_create_vat_unit` | 可用 | 使用风格默认值、动画回退和 warning 生成 VAT 单位制作计划。 |
-| Unit Editor MCP | `editor_apply_create_vat_unit` | 可用 | 执行 VAT 单位生成，包括网格转换、VAT 烘焙、Renderer 复制、单位配置创建或合并。 |
+| Unit Editor MCP | `editor_plan_create_vat_unit` | 可用 | 使用风格默认值、源材质贴图继承、动画回退和 warning 生成 VAT 单位制作计划。 |
+| Unit Editor MCP | `editor_apply_create_vat_unit` | 可用 | 执行 VAT 单位生成，包括网格转换、VAT 材质创建、VAT 烘焙、Renderer 复制、单位配置创建或合并。 |
 | Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | 可用 | 从当前编辑器选择或 `selected_assets` 推导 VAT 单位 spec，并返回可审查计划。 |
 | Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | 可用 | AI 使用的“获取当前，生成”一键入口。 |
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | 可用 | 计划把一个单位和关联生成资产移动到风格化目录。 |
@@ -117,6 +117,8 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 | Batch FX MCP | `batch_fx_set_renderer_defaults` | 可用 | 设置 `AMassBattleFxRenderer` 蓝图默认值，包括 `NiagaraSystemAsset`、`NDC_BurstFx`、`SubType`、batch size 和 pooling cooldown。 |
 
 批处理 FX 的闭环是：读取/复制参考特效资产，准备 batched Niagara/NDC/Renderer 蓝图，MCP 写入并验证 renderer 蓝图默认值，由用户把 renderer actor 放进测试关卡，再用 Unit MCP 把 `FFxConfig` 写入 `Hit.SpawnFx`、`Death.SpawnFx`、`Attack.SpawnFx` 等数组。MCP 不负责自动修改当前关卡布局；只要用户不在关卡里覆盖实例参数，拖进去的 actor 应继承资产默认值。
+
+VAT 单位创建会先使用发现到的原始贴图；如果基于文件名的贴图发现漏掉源材质贴图，Editor MCP 会在创建 VAT 材质实例前从源 SkeletalMesh 材质继承常见贴图参数和 used textures。这样 AI 命令不完整时仍能生成可运行资产，同时返回 `defaulted_original_textures_from_source_material` warning 供复核。
 
 ## 默认风格与模板化工作流
 

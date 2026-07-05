@@ -32,7 +32,8 @@ Treat MCP as the asset-registry hand, not as judgement. Build the relationship g
 4. Run `MCP_EditorValidateCreateVatUnit` for explicit specs. Apply with `MCP_EditorApplyCreateVatUnit` when `valid=true`; use `overwrite_existing=true` for repeatable editor runs.
 5. When animation names are nonstandard, pass an explicit `animations` category map. The editor MCP can fall back to same-skeleton AnimSequences, but it will warn because the state mapping is guessed.
 6. Read back the generated unit with `MCP_UnitGet` and verify asset existence, renderer class, material slot, attack enabled state, projectile/effect arrays, range, damage, and subtype.
-7. VAT create specs use `unit_name`, `target_package_path`, and `target_unit_package_path` as the canonical output naming fields. Do not use older field names for these concepts.
+7. For VAT materials, expect filename discovery first and source-material texture inheritance as a fallback. Treat `defaulted_original_textures_from_source_material` warnings as review items: verify the resulting material depends on the intended BaseColor/Normal/ARM textures with `MCP_EffectAssetReadSummary`.
+8. VAT create specs use `unit_name`, `target_package_path`, and `target_unit_package_path` as the canonical output naming fields. Do not use older field names for these concepts.
 
 ## Default-Tolerant Create
 
@@ -43,6 +44,7 @@ The editor MCP should still create a runnable unit when an AI command is incompl
 - Missing `source_renderer_class`: use `/MassBattle/Core/AgentRenderer/BP_AgentRenderer_Template.BP_AgentRenderer_Template_C`.
 - Missing `niagara_system`: use `/MassBattle/Core/AgentRenderer/NS_AgentRenderer_Template.NS_AgentRenderer_Template`.
 - Missing `animation_name_filter`: use an empty filter and scan same-skeleton AnimSequences under `animation_search_path`.
+- Missing or incomplete original texture discovery: inherit common texture parameters and used textures from the source skeletal material, return `defaulted_original_textures_from_source_material`, and let the AI verify material dependencies.
 - If automatic animation categorization is empty, accept compatible AnimSequences as a fallback and return a warning asking the AI to provide explicit `animations`.
 - If no animation can be found, default apply may continue as a static fallback and return `warning_static_fallback`; set `allow_static_fallback=false` when an animated VAT bake is mandatory.
 - Selection-based tools accept `selected_assets` to simulate current editor selection in scripted runs. Select a unit plus a mesh to patch that unit; pass `selected_unit_role="template"` when the selected unit should be cloned instead.

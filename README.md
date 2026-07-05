@@ -94,8 +94,8 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Unit Editor MCP | `editor_get_status` | Available | Read unit editor workflow capabilities. |
 | Unit Editor MCP | `editor_list_profiles` | Available | List style profiles and authoring recipes. |
 | Unit Editor MCP | `editor_get_profile` | Available | Read one profile or recipe. |
-| Unit Editor MCP | `editor_plan_create_vat_unit` | Available | Plan VAT unit generation with style defaults, animation fallback, and warnings for incomplete AI input. |
-| Unit Editor MCP | `editor_apply_create_vat_unit` | Available | Execute VAT unit generation, including mesh conversion, VAT bake, renderer duplication, and unit config creation or merge. |
+| Unit Editor MCP | `editor_plan_create_vat_unit` | Available | Plan VAT unit generation with style defaults, source-material texture inheritance, animation fallback, and warnings for incomplete AI input. |
+| Unit Editor MCP | `editor_apply_create_vat_unit` | Available | Execute VAT unit generation, including mesh conversion, VAT material creation, VAT bake, renderer duplication, and unit config creation or merge. |
 | Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | Available | Infer a VAT unit spec from current editor selection or `selected_assets`, then return a reviewable plan. |
 | Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | Available | One-click "current selection -> generate" entry point for AI-driven unit creation. |
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | Available | Plan moving one unit and linked generated assets into the style layout. |
@@ -117,6 +117,8 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Batch FX MCP | `batch_fx_set_renderer_defaults` | Available | Set `AMassBattleFxRenderer` Blueprint defaults, including `NiagaraSystemAsset`, `NDC_BurstFx`, `SubType`, batch size, and pooling cooldown. |
 
 The batch FX loop is: read or duplicate reference effect assets, prepare batched Niagara/NDC/Renderer Blueprints, let MCP write and verify renderer Blueprint defaults, have the user place the renderer actor in a test level, then use Unit MCP to write `FFxConfig` into arrays such as `Hit.SpawnFx`, `Death.SpawnFx`, and `Attack.SpawnFx`. MCP does not automatically modify the current level layout. As long as the user does not override instance parameters in the level, newly placed actors should inherit asset defaults.
+
+VAT unit creation first uses discovered original textures. If filename-based discovery misses a source material texture, the editor MCP inherits common texture parameters and used textures from the source skeletal material before creating the VAT material instance. This keeps incomplete AI commands runnable while returning `defaulted_original_textures_from_source_material` warnings for review.
 
 ## Default Style And Template-Based Workflow
 

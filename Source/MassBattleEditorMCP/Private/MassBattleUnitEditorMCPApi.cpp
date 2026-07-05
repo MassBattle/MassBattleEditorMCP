@@ -18,6 +18,7 @@
 #include "HAL/FileManager.h"
 #include "IAssetTools.h"
 #include "MassBattleEditorMCPApi.h"
+#include "MassBattleEditorStructs.h"
 #include "MassBattleFuncLibEd.h"
 #include "MassBattleUnitMCPApi.h"
 #include "MaterialEditingLibrary.h"
@@ -1543,6 +1544,281 @@ static void AddIssueValueUnique(TArray<TSharedPtr<FJsonValue>>& Issues, const TS
 static void AddIssueUnique(TArray<TSharedPtr<FJsonValue>>& Issues, const FString& Severity, const FString& Code, const FString& Message, const FString& Field = FString())
 {
 	AddIssueValueUnique(Issues, MakeShared<FJsonValueObject>(MakeIssue(Severity, Code, Message, Field)));
+}
+
+static FString TexturePathOrEmpty(const UObject* Object)
+{
+	return Object ? Object->GetPathName() : FString();
+}
+
+static bool ParseOriginalTexturesJson(const FString& JsonString, TArray<FOriginalTextures>& OutTextures)
+{
+	OutTextures.Empty();
+	if (JsonString.TrimStartAndEnd().IsEmpty())
+	{
+		return true;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
+	if (!FJsonSerializer::Deserialize(Reader, JsonArray))
+	{
+		return false;
+	}
+
+	auto LoadTexture2D = [](const TSharedPtr<FJsonObject>& Object, const FString& FieldName) -> UTexture2D*
+	{
+		FString Path;
+		if (!Object.IsValid() || !Object->TryGetStringField(FieldName, Path) || Path.IsEmpty())
+		{
+			return nullptr;
+		}
+		return Cast<UTexture2D>(FSoftObjectPath(EnsureObjectPath(Path)).TryLoad());
+	};
+
+	for (const TSharedPtr<FJsonValue>& Value : JsonArray)
+	{
+		if (!Value.IsValid() || Value->Type != EJson::Object)
+		{
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> Object = Value->AsObject();
+		FOriginalTextures TextureSet;
+		Object->TryGetStringField(TEXT("SlotName"), TextureSet.SlotName);
+		Object->TryGetBoolField(TEXT("bUseARM"), TextureSet.bUseARM);
+		TextureSet.ARM = LoadTexture2D(Object, TEXT("ARM"));
+		TextureSet.BaseColor = LoadTexture2D(Object, TEXT("BaseColor"));
+		TextureSet.Specular = LoadTexture2D(Object, TEXT("Specular"));
+		TextureSet.Roughness = LoadTexture2D(Object, TEXT("Roughness"));
+		TextureSet.Normal = LoadTexture2D(Object, TEXT("Normal"));
+		TextureSet.Metallic = LoadTexture2D(Object, TEXT("Metallic"));
+		TextureSet.Emissive = LoadTexture2D(Object, TEXT("Emissive"));
+		TextureSet.Opacity = LoadTexture2D(Object, TEXT("Opacity"));
+		TextureSet.AO = LoadTexture2D(Object, TEXT("AO"));
+		OutTextures.Add(TextureSet);
+	}
+
+	return true;
+}
+
+static FString SerializeOriginalTexturesJson(const TArray<FOriginalTextures>& Textures)
+{
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	for (const FOriginalTextures& TextureSet : Textures)
+	{
+		TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+		Object->SetStringField(TEXT("SlotName"), TextureSet.SlotName);
+		Object->SetBoolField(TEXT("bUseARM"), TextureSet.bUseARM);
+		Object->SetStringField(TEXT("ARM"), TexturePathOrEmpty(TextureSet.ARM));
+		Object->SetStringField(TEXT("BaseColor"), TexturePathOrEmpty(TextureSet.BaseColor));
+		Object->SetStringField(TEXT("Specular"), TexturePathOrEmpty(TextureSet.Specular));
+		Object->SetStringField(TEXT("Roughness"), TexturePathOrEmpty(TextureSet.Roughness));
+		Object->SetStringField(TEXT("Normal"), TexturePathOrEmpty(TextureSet.Normal));
+		Object->SetStringField(TEXT("Metallic"), TexturePathOrEmpty(TextureSet.Metallic));
+		Object->SetStringField(TEXT("Emissive"), TexturePathOrEmpty(TextureSet.Emissive));
+		Object->SetStringField(TEXT("Opacity"), TexturePathOrEmpty(TextureSet.Opacity));
+		Object->SetStringField(TEXT("AO"), TexturePathOrEmpty(TextureSet.AO));
+		JsonArray.Add(MakeShared<FJsonValueObject>(Object));
+	}
+
+	FString Output;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+	FJsonSerializer::Serialize(JsonArray, Writer);
+	return Output;
+}
+
+static UTexture2D* AsTexture2D(UTexture* Texture)
+{
+	return Texture ? Cast<UTexture2D>(Texture) : nullptr;
+}
+
+static UTexture2D* FindTextureParameter2D(UMaterialInterface* Material, const TArray<FName>& ParameterNames)
+{
+	UMaterialInstanceConstant* MaterialInstance = Cast<UMaterialInstanceConstant>(Material);
+	if (!MaterialInstance)
+	{
+		return nullptr;
+	}
+
+	for (const FName& ParameterName : ParameterNames)
+	{
+		if (UTexture2D* Texture = AsTexture2D(UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(MaterialInstance, ParameterName)))
+		{
+			return Texture;
+		}
+		if (UTexture2D* Texture = AsTexture2D(UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(MaterialInstance, ParameterName, EMaterialParameterAssociation::LayerParameter)))
+		{
+			return Texture;
+		}
+	}
+	return nullptr;
+}
+
+static bool TextureNameMatchesAnyToken(UTexture2D* Texture, const TArray<FString>& Tokens)
+{
+	if (!Texture)
+	{
+		return false;
+	}
+
+	const FString TextureName = Texture->GetName();
+	for (const FString& Token : Tokens)
+	{
+		if (!Token.IsEmpty() && TextureName.Contains(Token, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static UTexture2D* FindUsedTexture2D(UMaterialInterface* Material, const TArray<FString>& NameTokens, bool bAllowSingleTextureFallback)
+{
+	if (!Material)
+	{
+		return nullptr;
+	}
+
+	TArray<UTexture*> UsedTextures = UMaterialEditingLibrary::GetMaterialUsedTextures(Material);
+	TArray<UTexture2D*> UsedTexture2Ds;
+	for (UTexture* UsedTexture : UsedTextures)
+	{
+		if (UTexture2D* Texture2D = AsTexture2D(UsedTexture))
+		{
+			UsedTexture2Ds.AddUnique(Texture2D);
+		}
+	}
+
+	for (UTexture2D* Texture2D : UsedTexture2Ds)
+	{
+		if (TextureNameMatchesAnyToken(Texture2D, NameTokens))
+		{
+			return Texture2D;
+		}
+	}
+
+	if (bAllowSingleTextureFallback && UsedTexture2Ds.Num() == 1)
+	{
+		return UsedTexture2Ds[0];
+	}
+	return nullptr;
+}
+
+static UTexture2D* ResolveSourceMaterialTexture2D(
+	UMaterialInterface* Material,
+	const TArray<FName>& ParameterNames,
+	const TArray<FString>& NameTokens,
+	bool bAllowSingleTextureFallback)
+{
+	if (UTexture2D* Texture = FindTextureParameter2D(Material, ParameterNames))
+	{
+		return Texture;
+	}
+	return FindUsedTexture2D(Material, NameTokens, bAllowSingleTextureFallback);
+}
+
+static int32 EnrichOriginalTexturesFromSkeletalMaterials(
+	const FString& SkeletalMeshPath,
+	TArray<FOriginalTextures>& OriginalTextures,
+	TArray<TSharedPtr<FJsonValue>>& Warnings)
+{
+	USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(FSoftObjectPath(EnsureObjectPath(SkeletalMeshPath)).TryLoad());
+	if (!SkeletalMesh)
+	{
+		return 0;
+	}
+
+	const TArray<FSkeletalMaterial>& SkeletalMaterials = SkeletalMesh->GetMaterials();
+	int32 FilledCount = 0;
+	while (OriginalTextures.Num() < SkeletalMaterials.Num())
+	{
+		OriginalTextures.AddDefaulted();
+	}
+
+	for (int32 SlotIndex = 0; SlotIndex < SkeletalMaterials.Num(); ++SlotIndex)
+	{
+		FOriginalTextures& TextureSet = OriginalTextures[SlotIndex];
+		const FSkeletalMaterial& SkeletalMaterial = SkeletalMaterials[SlotIndex];
+		if (TextureSet.SlotName.IsEmpty())
+		{
+			TextureSet.SlotName = SkeletalMaterial.MaterialSlotName.ToString();
+		}
+
+		UMaterialInterface* SourceMaterial = SkeletalMaterial.MaterialInterface;
+		if (!SourceMaterial)
+		{
+			continue;
+		}
+
+		TArray<FString> FilledFields;
+		auto FillIfMissing = [&](TObjectPtr<UTexture2D>& Target, const FString& FieldName, const TArray<FName>& ParameterNames, const TArray<FString>& NameTokens, bool bAllowSingleTextureFallback)
+		{
+			if (Target)
+			{
+				return;
+			}
+			if (UTexture2D* ResolvedTexture = ResolveSourceMaterialTexture2D(SourceMaterial, ParameterNames, NameTokens, bAllowSingleTextureFallback))
+			{
+				Target = ResolvedTexture;
+				FilledFields.Add(FString::Printf(TEXT("%s=%s"), *FieldName, *ResolvedTexture->GetPathName()));
+				++FilledCount;
+			}
+		};
+
+		FillIfMissing(TextureSet.BaseColor, TEXT("BaseColor"),
+			{ TEXT("BaseColorTex"), TEXT("BaseColorTexture"), TEXT("baseColorTexture"), TEXT("BaseColor"), TEXT("Albedo"), TEXT("Diffuse"), TEXT("DiffuseTex"), TEXT("ColorTex"), TEXT("Texture") },
+			{ TEXT("BaseColor"), TEXT("Base_Color"), TEXT("Albedo"), TEXT("Diffuse"), TEXT("_D"), TEXT("_BC"), TEXT("Color") },
+			true);
+		FillIfMissing(TextureSet.Normal, TEXT("Normal"),
+			{ TEXT("NormalTex"), TEXT("NormalTexture"), TEXT("normalTexture"), TEXT("Normal"), TEXT("NormalMap") },
+			{ TEXT("Normal"), TEXT("_N"), TEXT("_Nor") },
+			false);
+		FillIfMissing(TextureSet.Roughness, TEXT("Roughness"),
+			{ TEXT("RoughnessTex"), TEXT("RoughnessTexture"), TEXT("roughnessTexture"), TEXT("Roughness") },
+			{ TEXT("Roughness"), TEXT("_R"), TEXT("_Rough") },
+			false);
+		FillIfMissing(TextureSet.Metallic, TEXT("Metallic"),
+			{ TEXT("MetallicTex"), TEXT("MetallicTexture"), TEXT("metallicTexture"), TEXT("Metallic") },
+			{ TEXT("Metallic"), TEXT("_M"), TEXT("_Metal") },
+			false);
+		FillIfMissing(TextureSet.ARM, TEXT("ARM"),
+			{ TEXT("ARMTex"), TEXT("ARMTexture"), TEXT("OcclusionRoughnessMetallic"), TEXT("ORM"), TEXT("metallicRoughnessTexture") },
+			{ TEXT("_ARM"), TEXT("_ORM"), TEXT("_MRA"), TEXT("MetallicRoughness") },
+			false);
+		if (TextureSet.ARM)
+		{
+			TextureSet.bUseARM = true;
+		}
+		FillIfMissing(TextureSet.Specular, TEXT("Specular"),
+			{ TEXT("SpecularTex"), TEXT("SpecularTexture"), TEXT("Specular") },
+			{ TEXT("Specular"), TEXT("_S"), TEXT("_Spec") },
+			false);
+		FillIfMissing(TextureSet.Emissive, TEXT("Emissive"),
+			{ TEXT("EmissiveTex"), TEXT("EmissiveTexture"), TEXT("emissiveTexture"), TEXT("Emissive") },
+			{ TEXT("Emissive"), TEXT("_E"), TEXT("_Emiss") },
+			false);
+		FillIfMissing(TextureSet.Opacity, TEXT("Opacity"),
+			{ TEXT("OpacityTex"), TEXT("OpacityTexture"), TEXT("AlphaTexture"), TEXT("opacityTexture"), TEXT("Opacity"), TEXT("Alpha") },
+			{ TEXT("Opacity"), TEXT("_O"), TEXT("_Mask"), TEXT("_Trans"), TEXT("Alpha") },
+			false);
+		FillIfMissing(TextureSet.AO, TEXT("AO"),
+			{ TEXT("AOTex"), TEXT("AOTexture"), TEXT("OcclusionTexture"), TEXT("occlusionTexture"), TEXT("AmbientOcclusion") },
+			{ TEXT("_AO"), TEXT("AmbientOcclusion"), TEXT("Occlusion") },
+			false);
+
+		if (!FilledFields.IsEmpty())
+		{
+			AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_original_textures_from_source_material"),
+				FString::Printf(TEXT("Original texture data for slot '%s' was incomplete; inherited %s from source material %s."),
+					*TextureSet.SlotName,
+					*FString::Join(FilledFields, TEXT(", ")),
+					*SourceMaterial->GetPathName()),
+				TEXT("textures"));
+		}
+	}
+
+	return FilledCount;
 }
 
 static bool HasErrorIssue(const TArray<TSharedPtr<FJsonValue>>& Issues)
@@ -4567,6 +4843,24 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 	else
 	{
 		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("create_materials"), TEXT("would_run"), TEXT("Material instances can be created."));
+		FString OriginalTexturesJson;
+		const TSharedPtr<FJsonObject>* TexturesResult = nullptr;
+		if (Discovery.IsValid() && Discovery->TryGetObjectField(TEXT("textures"), TexturesResult) && TexturesResult && TexturesResult->IsValid())
+		{
+			OriginalTexturesJson = MassBattleUnitEditorMCP::JsonArrayFieldToString(*TexturesResult, TEXT("textures"));
+		}
+		TArray<FOriginalTextures> OriginalTexturesArray;
+		if (MassBattleUnitEditorMCP::ParseOriginalTexturesJson(OriginalTexturesJson, OriginalTexturesArray))
+		{
+			TArray<TSharedPtr<FJsonValue>> TextureInheritanceWarnings;
+			if (MassBattleUnitEditorMCP::EnrichOriginalTexturesFromSkeletalMaterials(SkeletalMeshPath, OriginalTexturesArray, TextureInheritanceWarnings) > 0)
+			{
+				for (const TSharedPtr<FJsonValue>& Warning : TextureInheritanceWarnings)
+				{
+					MassBattleUnitEditorMCP::AddIssueValueUnique(Issues, Warning);
+				}
+			}
+		}
 	}
 
 	if (MassBattleUnitEditorMCP::HasMaterialOverrides(Spec))
@@ -4869,7 +5163,21 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 			OriginalTexturesJson = MassBattleUnitEditorMCP::JsonArrayFieldToString(*TexturesResult, TEXT("textures"));
 		}
 
+		TArray<TSharedPtr<FJsonValue>> TextureInheritanceWarnings;
+		int32 InheritedTextureCount = 0;
+		TArray<FOriginalTextures> OriginalTexturesArray;
+		if (MassBattleUnitEditorMCP::ParseOriginalTexturesJson(OriginalTexturesJson, OriginalTexturesArray))
+		{
+			InheritedTextureCount = MassBattleUnitEditorMCP::EnrichOriginalTexturesFromSkeletalMaterials(SkeletalMeshPath, OriginalTexturesArray, TextureInheritanceWarnings);
+			OriginalTexturesJson = MassBattleUnitEditorMCP::SerializeOriginalTexturesJson(OriginalTexturesArray);
+		}
+
 		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("create_materials"), TEXT("MCP_CreateMaterialInstanceForStaticMeshWithLODs"), TEXT("running"), TEXT("Creating material instances and assigning them to the generated StaticMesh."));
+		Step->SetNumberField(TEXT("inherited_texture_count"), InheritedTextureCount);
+		if (!TextureInheritanceWarnings.IsEmpty())
+		{
+			Step->SetArrayField(TEXT("warnings"), TextureInheritanceWarnings);
+		}
 		const FString MaterialResult = UMassBattleEditorMCPApi::MCP_CreateMaterialInstanceForStaticMeshWithLODs(StaticMeshPath, GeneratedPackagePath, MaterialAssetName, ParentMaterialPath, OriginalTexturesJson);
 		MassBattleUnitEditorMCP::SetStepResult(Step, MaterialResult);
 		TSharedPtr<FJsonObject> MaterialJson = MassBattleUnitEditorMCP::ParseObject(MaterialResult);
