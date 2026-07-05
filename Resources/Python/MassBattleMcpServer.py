@@ -224,28 +224,32 @@ async def editor_get_profile(profile_type: str, profile_id: str) -> Dict[str, An
 
 @mcp.tool()
 async def editor_plan_create_vat_unit(spec: Any) -> Dict[str, Any]:
-    """Plan VAT unit authoring, resolving style defaults and returning warnings for inferred or incomplete inputs."""
+    """Diagnostic: preview the MassBattleTools DoAll-equivalent VAT unit spec with resolved defaults and warnings."""
     return await get_connection().send_command("MCP_EditorPlanCreateVatUnit", {"SpecJson": _json_arg(spec)})
 
 
 @mcp.tool()
 async def editor_validate_create_vat_unit(spec: Any) -> Dict[str, Any]:
-    """Validate VAT unit authoring readiness, including defaulted fields and warnings that should be reviewed."""
+    """Diagnostic: validate DoAll-equivalent VAT unit inputs without writing assets."""
     return await get_connection().send_command("MCP_EditorValidateCreateVatUnit", {"SpecJson": _json_arg(spec)})
 
 
 @mcp.tool()
-async def editor_apply_create_vat_unit(spec: Any, save_assets: bool = True) -> Dict[str, Any]:
-    """Execute VAT unit authoring using resolved defaults; warnings in the result identify fields the AI should refine."""
+async def editor_apply_create_vat_unit(
+    spec: Any,
+    save_assets: bool = True,
+    compact_response: bool = True,
+) -> Dict[str, Any]:
+    """Primary non-selection DoAll-equivalent VAT unit authoring entry; defaults missing fields and returns warnings."""
     return await get_connection().send_command(
         "MCP_EditorApplyCreateVatUnit",
-        {"SpecJson": _json_arg(spec), "bSaveAssets": save_assets},
+        {"SpecJson": _json_arg_with_defaults(spec, {"compact_response": compact_response}), "bSaveAssets": save_assets},
     )
 
 
 @mcp.tool()
 async def editor_plan_create_vat_unit_from_selection(options: Any = None) -> Dict[str, Any]:
-    """Build a VAT unit create spec from current editor selection or selected_assets, then return a reviewable plan."""
+    """Diagnostic: infer the DoAll spec from current editor selection or selected_assets and return it for review."""
     return await get_connection().send_command(
         "MCP_EditorPlanCreateVatUnitFromSelection",
         {"OptionsJson": _json_arg(options)},
@@ -258,7 +262,7 @@ async def editor_apply_create_vat_unit_from_selection(
     save_assets: bool = True,
     compact_response: bool = True,
 ) -> Dict[str, Any]:
-    """Build a VAT unit create spec from current editor selection or selected_assets, then execute the create workflow."""
+    """Primary one-click current selection -> generate entry matching the MassBattleTools DoAll workflow."""
     return await get_connection().send_command(
         "MCP_EditorApplyCreateVatUnitFromSelection",
         {"OptionsJson": _json_arg_with_defaults(options, {"compact_response": compact_response}), "bSaveAssets": save_assets},

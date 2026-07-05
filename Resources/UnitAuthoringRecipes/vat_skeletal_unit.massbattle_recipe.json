@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "vat_skeletal_unit",
   "display_name": "VAT Skeletal Mesh Unit",
-  "description": "Create or refresh a MassBattle unit from a purchased skeletal mesh using the existing MassBattle editor conversion pipeline.",
+  "description": "Create or refresh a MassBattle unit from a purchased skeletal mesh through the MassBattleTools DoAll-equivalent editor pipeline.",
   "style_profile": "default",
   "input_schema": {
     "template_unit": "Existing UMassBattleAgentConfigDataAsset used as the base unit. Optional when the selected style has default_unit_template/default_unit_templates; the plan returns a warning when it defaults this.",
@@ -24,6 +24,7 @@
     "target_unit_package_path": "Optional override for the generated unit DataAsset package path.",
     "output_root": "Optional override for generated content root."
   },
+  "pipeline_note": "These are internal DoAll stages for diagnostics. Normal AI authoring should call the apply entry once and inspect warnings.",
   "pipeline": [
     {
       "id": "organize_paths",

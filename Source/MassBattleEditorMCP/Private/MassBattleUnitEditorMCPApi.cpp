@@ -1078,7 +1078,19 @@ static UAnimToTextureDataAsset* CreateOrLoadAnimToTextureDataAsset(const FString
 
 static void SetMaterialStaticSwitch(UMaterialInstanceConstant* MaterialInstance, const FName ParameterName, bool bValue)
 {
+	UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MaterialInstance, ParameterName, bValue);
 	UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MaterialInstance, ParameterName, bValue, EMaterialParameterAssociation::LayerParameter);
+}
+
+static void SetMaterialTextureParameter(UMaterialInstanceConstant* MaterialInstance, const FName ParameterName, UTexture2D* Texture)
+{
+	if (!Texture)
+	{
+		return;
+	}
+
+	UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(MaterialInstance, ParameterName, Texture);
+	UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(MaterialInstance, ParameterName, Texture, EMaterialParameterAssociation::LayerParameter);
 }
 
 static int32 UpdateVatMaterialsForLOD(UStaticMesh* StaticMesh, UAnimToTextureDataAsset* DataAsset, UTexture2D* AnimDataTexture, const FLODDataEd& LOD)
@@ -1109,12 +1121,25 @@ static int32 UpdateVatMaterialsForLOD(UStaticMesh* StaticMesh, UAnimToTextureDat
 			continue;
 		}
 
+		UAnimToTextureBPLibrary::UpdateMaterialInstanceFromDataAsset(DataAsset, MaterialInstance);
 		UAnimToTextureBPLibrary::UpdateMaterialInstanceFromDataAsset(DataAsset, MaterialInstance, EMaterialParameterAssociation::LayerParameter);
 		if (AnimDataTexture)
 		{
-			UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(MaterialInstance, TEXT("AnimDataTex"), AnimDataTexture, EMaterialParameterAssociation::LayerParameter);
+			SetMaterialTextureParameter(MaterialInstance, TEXT("AnimDataTex"), AnimDataTexture);
+		}
+		if (LOD.Mode == EVATBakeMode::BoneMode)
+		{
+			SetMaterialTextureParameter(MaterialInstance, TEXT("BonePositionTexture"), DataAsset->BonePositionTexture.LoadSynchronous());
+			SetMaterialTextureParameter(MaterialInstance, TEXT("BoneRotationTexture"), DataAsset->BoneRotationTexture.LoadSynchronous());
+			SetMaterialTextureParameter(MaterialInstance, TEXT("BoneWeightsTexture"), DataAsset->BoneWeightTexture.LoadSynchronous());
+		}
+		else
+		{
+			SetMaterialTextureParameter(MaterialInstance, TEXT("PositionTexture"), DataAsset->VertexPositionTexture.LoadSynchronous());
+			SetMaterialTextureParameter(MaterialInstance, TEXT("NormalTexture"), DataAsset->VertexNormalTexture.LoadSynchronous());
 		}
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("BoneMode"), LOD.Mode == EVATBakeMode::BoneMode);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseVAT"), true);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseTwoInfluences"), true);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseFourInfluences"), false);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseBlend2"), LOD.AnimBlendLevel == 2 || LOD.AnimBlendLevel == 3);
@@ -1932,6 +1957,8 @@ static TSharedPtr<FJsonObject> MakeCompactCreateVatApplySummary(const TSharedPtr
 	CopyBoolField(ApplyJson, Summary, TEXT("success"));
 	CopyBoolField(ApplyJson, Summary, TEXT("dry_run"));
 	CopyBoolField(ApplyJson, Summary, TEXT("save_assets"));
+	CopyBoolField(ApplyJson, Summary, TEXT("static_fallback_used"));
+	CopyStringField(ApplyJson, Summary, TEXT("error"));
 
 	const TSharedPtr<FJsonObject>* Plan = nullptr;
 	if (ApplyJson->TryGetObjectField(TEXT("plan"), Plan) && Plan && Plan->IsValid())
@@ -5040,10 +5067,12 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	Spec->TryGetBoolField(TEXT("preview_only"), bDryRun);
 
 	TSharedPtr<FJsonObject> Root = MassBattleUnitEditorMCP::MakeSuccess();
-	Root->SetStringField(TEXT("editor_workflow"), TEXT("MassBattleEditor VAT skeletal unit authoring apply"));
+	Root->SetStringField(TEXT("editor_workflow"), TEXT("MassBattleTools DoAll VAT skeletal unit authoring apply"));
 	Root->SetBoolField(TEXT("dry_run"), bDryRun);
 	Root->SetBoolField(TEXT("save_assets"), bSaveAssets);
 	Root->SetObjectField(TEXT("plan"), Plan);
+	const bool bCompactResponse = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("compact_response") }, false);
+	Root->SetBoolField(TEXT("compact_response"), bCompactResponse);
 
 	TArray<TSharedPtr<FJsonValue>> ExecutionSteps;
 	if (bDryRun)
@@ -5478,6 +5507,10 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	}
 
 	Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+	if (bCompactResponse)
+	{
+		return MassBattleUnitEditorMCP::ToJsonString(MassBattleUnitEditorMCP::MakeCompactCreateVatApplySummary(Root));
+	}
 	return MassBattleUnitEditorMCP::ToJsonString(Root);
 }
 
@@ -5835,11 +5868,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorGetStatus()
 	Tools.Add(Tool(TEXT("MCP_EditorPlanAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Use MassBattleEditor functions to plan an AnimShared update for an existing unit.")));
 	Tools.Add(Tool(TEXT("MCP_EditorValidateAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Validate whether an animation-set edit can produce an applicable unit merge plan.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Plan and apply an AnimShared update for an existing unit.")));
-	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Plan VAT unit authoring with style defaults, inferred fields, fallback animation discovery, and warnings for incomplete AI input.")));
-	Tools.Add(Tool(TEXT("MCP_EditorValidateCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Validate resolved defaults, warnings, asset conflicts, and execution readiness for VAT unit authoring.")));
-	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Execute VAT unit authoring using plan defaults; warnings/execution_steps identify fields the AI should refine.")));
-	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Build a VAT unit create spec from current editor selection or selected_assets, then return a reviewable plan.")));
-	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Build a VAT unit create spec from current editor selection or selected_assets, then execute the create workflow.")));
+	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnit"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: preview the MassBattleTools DoAll-equivalent VAT unit spec with resolved defaults and warnings.")));
+	Tools.Add(Tool(TEXT("MCP_EditorValidateCreateVatUnit"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: validate DoAll-equivalent VAT unit inputs without writing assets.")));
+	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Primary non-selection DoAll-equivalent VAT unit authoring entry; defaults missing fields and returns warnings.")));
+	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: infer the DoAll spec from current selection or selected_assets and return it for review.")));
+	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Primary one-click current selection -> generate entry matching the MassBattleTools DoAll workflow.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Plan moving a unit and its editor-generated linked assets into the selected style layout.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Apply a reviewed linked-asset organization plan; dry_run=true by default.")));
 

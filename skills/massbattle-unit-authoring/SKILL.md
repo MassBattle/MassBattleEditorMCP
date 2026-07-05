@@ -26,14 +26,26 @@ Treat MCP as the asset-registry hand, not as judgement. Build the relationship g
 
 ## Create Unit
 
-1. If the user says they selected assets in the editor, or asks for "current/selected -> generate", prefer `MCP_EditorPlanCreateVatUnitFromSelection` then `MCP_EditorApplyCreateVatUnitFromSelection`. These tools infer `skeletal_mesh`, target/template unit, selected animations, materials, VAT data asset, Niagara, and renderer template from current selection or an explicit `selected_assets` list.
-2. Otherwise use `MCP_EditorPlanCreateVatUnit` for VAT/static-mesh unit creation. It resolves style defaults for package layout, template unit, VAT parent material, renderer template, Niagara system, sample rate, and animation search roots.
-3. Inspect `warnings` from the plan. Defaulted fields are allowed, but warnings are work items for the AI to refine when the result needs exact art or behavior.
-4. Run `MCP_EditorValidateCreateVatUnit` for explicit specs. Apply with `MCP_EditorApplyCreateVatUnit` when `valid=true`; use `overwrite_existing=true` for repeatable editor runs.
+Mirror the official `/MassBattle/Core/MassBattleTools` editor widget. Normal AI authoring should use one DoAll-equivalent apply call, not manually sequence internal stages.
+
+1. If the user selected assets in the editor, or asks for "current/selected -> generate", call `MCP_EditorApplyCreateVatUnitFromSelection` directly. It infers `skeletal_mesh`, target/template unit, selected animations, materials, VAT data asset, Niagara, and renderer template from current selection or explicit `selected_assets`.
+2. Otherwise call `MCP_EditorApplyCreateVatUnit` directly with the smallest useful spec. It resolves style defaults for package layout, template unit, VAT parent material, renderer template, Niagara system, 24 Hz VAT sampling, and animation search roots.
+3. Use `MCP_EditorPlanCreateVatUnit`, `MCP_EditorValidateCreateVatUnit`, or `MCP_EditorPlanCreateVatUnitFromSelection` only as diagnostics after an apply warning/failure, or when the user explicitly asks for a dry-run plan.
+4. Inspect `warnings` from the apply result. Defaulted fields are allowed, but warnings are work items for exact art or behavior.
 5. When animation names are nonstandard, pass an explicit `animations` category map. The editor MCP can fall back to same-skeleton AnimSequences, but it will warn because the state mapping is guessed.
 6. Read back the generated unit with `MCP_UnitGet` and verify asset existence, renderer class, material slot, attack enabled state, projectile/effect arrays, range, damage, and subtype.
 7. For VAT materials, expect filename discovery first and source-material texture inheritance as a fallback. Treat `defaulted_original_textures_from_source_material` warnings as review items: verify the resulting material depends on the intended BaseColor/Normal/ARM textures with `MCP_EffectAssetReadSummary`.
 8. VAT create specs use `unit_name`, `target_package_path`, and `target_unit_package_path` as the canonical output naming fields. Do not use older field names for these concepts.
+
+Official DoAll correspondence:
+
+- `FillTex` -> `FindAndFillOriginalTextures`, with source-material inheritance when filename discovery is incomplete.
+- `FillLod` -> `FindAndFillLODSettings`.
+- `FillAnim` -> `FindAndFillAnimSequences`, explicit `animations`, or compatible-animation fallback with warnings.
+- `CreateStaticMeshAndMat` -> `ConvertSkeletalMeshToStaticMeshWithLODs` then `CreateMaterialInstanceForStaticMeshWithLODs`.
+- `CreateVATTextures` -> create/update `UAnimToTextureDataAsset`, create VAT textures, run `AnimationToTexture`, update material instances.
+- `CreateDataAsset` -> merge `Visualize`, `LODShared`, `AnimShared`, and runtime animation sample-rate defaults into the target unit.
+- `CreateRenderer` -> duplicate/update the renderer Blueprint defaults for mesh, Niagara system, and subtype.
 
 ## Default-Tolerant Create
 

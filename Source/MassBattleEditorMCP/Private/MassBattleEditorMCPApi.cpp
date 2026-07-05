@@ -1605,27 +1605,27 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("unit_editor.animation"));
 
 	AddTool(TEXT("MCP_EditorPlanCreateVatUnit"),
-		TEXT("基于 MassBattleEditor VAT 骨骼单位工作流生成素材发现、默认补全、警告、目标路径和单位并集写计划"),
+		TEXT("诊断入口：预览与 MassBattleTools DoAll 等价的 VAT 单位生成 spec、默认补全和 warnings"),
 		TEXT("SpecJson"),
-		TEXT("unit_editor.create"));
+		TEXT("unit_editor.create.diagnostic"));
 
 	AddTool(TEXT("MCP_EditorValidateCreateVatUnit"),
-		TEXT("验证 VAT 骨骼单位工作流的默认补全结果、警告、资产冲突和执行可行性"),
+		TEXT("诊断入口：验证 DoAll 等价 VAT 单位生成输入，不写资产"),
 		TEXT("SpecJson"),
-		TEXT("unit_editor.create"));
+		TEXT("unit_editor.create.diagnostic"));
 
 	AddTool(TEXT("MCP_EditorApplyCreateVatUnit"),
-		TEXT("执行 MassBattleEditor VAT 骨骼单位工作流；使用 plan 默认值并返回需要 AI 补齐的 warnings/execution_steps"),
+		TEXT("主入口：执行非 selection 的 MassBattleTools DoAll 等价 VAT 单位生成，自动补缺省并返回 warnings"),
 		TEXT("SpecJson, bSaveAssets"),
 		TEXT("unit_editor.create"));
 
 	AddTool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"),
-		TEXT("从当前编辑器选择或 selected_assets 推导 VAT 单位生成 spec，并生成可审查计划"),
+		TEXT("诊断入口：从当前编辑器选择或 selected_assets 推导 DoAll spec 并返回可审查计划"),
 		TEXT("OptionsJson"),
-		TEXT("unit_editor.create"));
+		TEXT("unit_editor.create.diagnostic"));
 
 	AddTool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"),
-		TEXT("从当前编辑器选择或 selected_assets 推导 VAT 单位生成 spec，并一键执行生成流程"),
+		TEXT("主入口：从当前编辑器选择或 selected_assets 一键执行 MassBattleTools DoAll 等价生成流程"),
 		TEXT("OptionsJson, bSaveAssets"),
 		TEXT("unit_editor.create"));
 

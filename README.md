@@ -47,7 +47,7 @@ Copy-Item -Recurse -Force .\skills\massbattle-effect-mcp $env:USERPROFILE\.codex
 ```
 
 If `CODEX_HOME` is set, copy them to `$env:CODEX_HOME\skills\`.
-MCP is the editor tool interface. A skill only describes how to compose those tools; it should not turn a workflow into one large button.
+MCP is the editor tool interface. For unit authoring, the default AI-facing path mirrors the official `/MassBattle/Core/MassBattleTools` DoAll button: one apply call creates or refreshes the mesh, materials, VAT textures, renderer, and unit config while returning warnings for inferred fields. Plan/validate tools remain available as diagnostics, but they are not the normal creation workflow.
 
 ### Codex MCP Server Installation
 
@@ -94,10 +94,10 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Unit Editor MCP | `editor_get_status` | Available | Read unit editor workflow capabilities. |
 | Unit Editor MCP | `editor_list_profiles` | Available | List style profiles and authoring recipes. |
 | Unit Editor MCP | `editor_get_profile` | Available | Read one profile or recipe. |
-| Unit Editor MCP | `editor_plan_create_vat_unit` | Available | Plan VAT unit generation with style defaults, source-material texture inheritance, animation fallback, and warnings for incomplete AI input. |
-| Unit Editor MCP | `editor_apply_create_vat_unit` | Available | Execute VAT unit generation, including mesh conversion, VAT material creation, VAT bake, renderer duplication, and unit config creation or merge. |
-| Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | Available | Infer a VAT unit spec from current editor selection or `selected_assets`, then return a reviewable plan. |
-| Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | Available | One-click "current selection -> generate" entry point for AI-driven unit creation. |
+| Unit Editor MCP | `editor_plan_create_vat_unit` | Diagnostic | Preview the DoAll-equivalent VAT unit spec with style defaults, source-material texture inheritance, animation fallback, and warnings. |
+| Unit Editor MCP | `editor_apply_create_vat_unit` | Available | Primary non-selection DoAll-equivalent generation entry, including mesh conversion, VAT material creation, VAT bake, renderer duplication, and unit config creation or merge. |
+| Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | Diagnostic | Infer a DoAll spec from current editor selection or `selected_assets`, then return a reviewable plan. |
+| Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | Available | Primary one-click "current selection -> generate" entry point for AI-driven unit creation. |
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | Available | Plan moving one unit and linked generated assets into the style layout. |
 | Unit Editor MCP | `editor_apply_organize_unit_assets` | Available | Apply a reviewed unit asset organization plan; dry-run by default. |
 | Effect Asset MCP | `effect_asset_query` | Available | Query visual assets such as Niagara, Cascade, Blueprint, Material, Texture, and Sound by `query/root/classes/limit`. |
@@ -119,6 +119,16 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 The batch FX loop is: read or duplicate reference effect assets, prepare batched Niagara/NDC/Renderer Blueprints, let MCP write and verify renderer Blueprint defaults, have the user place the renderer actor in a test level, then use Unit MCP to write `FFxConfig` into arrays such as `Hit.SpawnFx`, `Death.SpawnFx`, and `Attack.SpawnFx`. MCP does not automatically modify the current level layout. As long as the user does not override instance parameters in the level, newly placed actors should inherit asset defaults.
 
 VAT unit creation first uses discovered original textures. If filename-based discovery misses a source material texture, the editor MCP inherits common texture parameters and used textures from the source skeletal material before creating the VAT material instance. This keeps incomplete AI commands runnable while returning `defaulted_original_textures_from_source_material` warnings for review.
+
+MassBattleTools DoAll correspondence for VAT units:
+
+1. `FillTex`, `FillLod`, and `FillAnim` resolve textures, LOD settings, and animation arrays.
+2. `CreateStaticMeshAndMat` converts the skeletal mesh and creates VAT material instances.
+3. `CreateVATTextures` creates or updates the AnimToTexture DataAsset, bakes VAT textures, writes AnimDataTex, and updates material instances.
+4. `CreateDataAsset` writes `Visualize`, `LODShared`, `AnimShared`, and runtime sample-rate defaults to the unit config.
+5. `CreateRenderer` duplicates or updates the renderer Blueprint defaults.
+
+The plan and validate calls expose these steps for review. They should not be required for a normal AI command.
 
 ## Default Style And Template-Based Workflow
 
