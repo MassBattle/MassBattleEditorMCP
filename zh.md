@@ -69,7 +69,7 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 ```
 
 安装后需要重启 Codex 或新开会话；UE 编辑器也需要加载本插件，bridge 才会开始监听。
-安装成功后应能看到 `massbattle-editor-mcp`，并可调用 `unit_get`、`unit_create`、`unit_write`、`unit_delete`、`effect_asset_read_summary`、`niagara_set_module_pin`、`batch_fx_read_renderer_defaults`、`batch_fx_set_renderer_defaults` 等原语工具。
+安装成功后应能看到 `massbattle-editor-mcp`，并可调用 `unit_get`、`unit_create`、`unit_write`、`unit_delete`、`editor_apply_create_vat_unit_from_selection`、`effect_asset_read_summary`、`niagara_set_module_pin`、`batch_fx_read_renderer_defaults`、`batch_fx_set_renderer_defaults` 等原语工具。
 
 注意：`FFxConfig.AgentBehaviorState` 使用的是 `EAgentBehaviorState`，可写值包括 `None`、`Appearing`、`Sleeping`、`Patrolling`、`Attacking`、`Hit`、`Dying`。受击 FX 应写 `Hit`，不要把运行时 flag 名 `BeingHit` 写进这个字段。
 
@@ -94,6 +94,10 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 | Unit Editor MCP | `editor_get_status` | 可用 | 读取单位编辑工作流能力。 |
 | Unit Editor MCP | `editor_list_profiles` | 可用 | 列出风格 profile 和 authoring recipe。 |
 | Unit Editor MCP | `editor_get_profile` | 可用 | 读取指定 profile 或 recipe。 |
+| Unit Editor MCP | `editor_plan_create_vat_unit` | 可用 | 使用风格默认值、动画回退和 warning 生成 VAT 单位制作计划。 |
+| Unit Editor MCP | `editor_apply_create_vat_unit` | 可用 | 执行 VAT 单位生成，包括网格转换、VAT 烘焙、Renderer 复制、单位配置创建或合并。 |
+| Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | 可用 | 从当前编辑器选择或 `selected_assets` 推导 VAT 单位 spec，并返回可审查计划。 |
+| Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | 可用 | AI 使用的“获取当前，生成”一键入口。 |
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | 可用 | 计划把一个单位和关联生成资产移动到风格化目录。 |
 | Unit Editor MCP | `editor_apply_organize_unit_assets` | 可用 | 应用已审核的单位资产整理计划；默认可 dry-run。 |
 | Effect Asset MCP | `effect_asset_query` | 可用 | 按 `query/root/classes/limit` 查找 Niagara、Cascade、Blueprint、Material、Texture、Sound 等视觉相关资产。 |

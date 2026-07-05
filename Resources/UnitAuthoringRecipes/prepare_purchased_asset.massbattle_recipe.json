@@ -6,7 +6,7 @@
   "style_profile": "default",
   "input_schema": {
     "skeletal_mesh": "Purchased USkeletalMesh asset path.",
-    "asset_slug": "Stable slug used for official naming, for example SK_JapanSoldier.",
+    "unit_name": "Stable unit name used for official naming, for example SK_JapanSoldier.",
     "family": "Optional organization family from the style profile.",
     "source_search_path": "Optional shared search root for textures and animations.",
     "texture_search_path": "Optional texture search root used by FindAndFillOriginalTextures.",

@@ -735,6 +735,14 @@ FString UMassBattleEditorMCPApi::MCP_FindAndFillOriginalTextures(const FString& 
 		return MakeErrorJson(FString::Printf(TEXT("Failed to load SkeletalMesh: %s"), *SkeletalMeshPath));
 	}
 
+	if (!SearchPath.IsEmpty())
+	{
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		TArray<FString> PathsToScan;
+		PathsToScan.Add(SearchPath);
+		AssetRegistryModule.Get().ScanPathsSynchronous(PathsToScan, true);
+	}
+
 	/// 调用原始函数
 	TArray<FOriginalTextures> EmptyTextures;
 	TArray<FOriginalTextures> Result = UMassBattleFuncLibEd::FindAndFillOriginalTextures(Mesh, EmptyTextures, SearchPath, AssetName);
@@ -763,6 +771,14 @@ FString UMassBattleEditorMCPApi::MCP_FindAndFillAnimSequences(const FString& Ske
 	if (!Mesh)
 	{
 		return MakeErrorJson(FString::Printf(TEXT("Failed to load SkeletalMesh: %s"), *SkeletalMeshPath));
+	}
+
+	if (!SearchPath.IsEmpty())
+	{
+		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		TArray<FString> PathsToScan;
+		PathsToScan.Add(SearchPath);
+		AssetRegistryModule.Get().ScanPathsSynchronous(PathsToScan, true);
 	}
 
 	/// 调用原始函数
@@ -1382,18 +1398,28 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("unit_editor.animation"));
 
 	AddTool(TEXT("MCP_EditorPlanCreateVatUnit"),
-		TEXT("基于 MassBattleEditor VAT 骨骼单位工作流生成素材发现、目标路径和单位并集写计划"),
+		TEXT("基于 MassBattleEditor VAT 骨骼单位工作流生成素材发现、默认补全、警告、目标路径和单位并集写计划"),
 		TEXT("SpecJson"),
 		TEXT("unit_editor.create"));
 
 	AddTool(TEXT("MCP_EditorValidateCreateVatUnit"),
-		TEXT("验证 VAT 骨骼单位工作流的必填项、资产冲突和执行可行性"),
+		TEXT("验证 VAT 骨骼单位工作流的默认补全结果、警告、资产冲突和执行可行性"),
 		TEXT("SpecJson"),
 		TEXT("unit_editor.create"));
 
 	AddTool(TEXT("MCP_EditorApplyCreateVatUnit"),
-		TEXT("执行 MassBattleEditor VAT 骨骼单位工作流；支持 dry_run、overwrite_existing 和按计划应用单位数据"),
+		TEXT("执行 MassBattleEditor VAT 骨骼单位工作流；使用 plan 默认值并返回需要 AI 补齐的 warnings/execution_steps"),
 		TEXT("SpecJson, bSaveAssets"),
+		TEXT("unit_editor.create"));
+
+	AddTool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"),
+		TEXT("从当前编辑器选择或 selected_assets 推导 VAT 单位生成 spec，并生成可审查计划"),
+		TEXT("OptionsJson"),
+		TEXT("unit_editor.create"));
+
+	AddTool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"),
+		TEXT("从当前编辑器选择或 selected_assets 推导 VAT 单位生成 spec，并一键执行生成流程"),
+		TEXT("OptionsJson, bSaveAssets"),
 		TEXT("unit_editor.create"));
 
 	AddTool(TEXT("MCP_EditorPlanOrganizeUnitAssets"),

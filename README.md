@@ -69,7 +69,7 @@ Quickly check the installation and UE bridge:
 ```
 
 After installation, restart Codex or start a new session. The UE editor must also load this plugin before the bridge starts listening.
-After successful installation, you should see `massbattle-editor-mcp` and be able to call primitive tools such as `unit_get`, `unit_create`, `unit_write`, `unit_delete`, `effect_asset_read_summary`, `niagara_set_module_pin`, `batch_fx_read_renderer_defaults`, and `batch_fx_set_renderer_defaults`.
+After successful installation, you should see `massbattle-editor-mcp` and be able to call primitive tools such as `unit_get`, `unit_create`, `unit_write`, `unit_delete`, `editor_apply_create_vat_unit_from_selection`, `effect_asset_read_summary`, `niagara_set_module_pin`, `batch_fx_read_renderer_defaults`, and `batch_fx_set_renderer_defaults`.
 
 Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values include `None`, `Appearing`, `Sleeping`, `Patrolling`, `Attacking`, `Hit`, and `Dying`. Hit FX should use `Hit`; do not write the runtime flag name `BeingHit` into this field.
 
@@ -94,6 +94,10 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Unit Editor MCP | `editor_get_status` | Available | Read unit editor workflow capabilities. |
 | Unit Editor MCP | `editor_list_profiles` | Available | List style profiles and authoring recipes. |
 | Unit Editor MCP | `editor_get_profile` | Available | Read one profile or recipe. |
+| Unit Editor MCP | `editor_plan_create_vat_unit` | Available | Plan VAT unit generation with style defaults, animation fallback, and warnings for incomplete AI input. |
+| Unit Editor MCP | `editor_apply_create_vat_unit` | Available | Execute VAT unit generation, including mesh conversion, VAT bake, renderer duplication, and unit config creation or merge. |
+| Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | Available | Infer a VAT unit spec from current editor selection or `selected_assets`, then return a reviewable plan. |
+| Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | Available | One-click "current selection -> generate" entry point for AI-driven unit creation. |
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | Available | Plan moving one unit and linked generated assets into the style layout. |
 | Unit Editor MCP | `editor_apply_organize_unit_assets` | Available | Apply a reviewed unit asset organization plan; dry-run by default. |
 | Effect Asset MCP | `effect_asset_query` | Available | Query visual assets such as Niagara, Cascade, Blueprint, Material, Texture, and Sound by `query/root/classes/limit`. |

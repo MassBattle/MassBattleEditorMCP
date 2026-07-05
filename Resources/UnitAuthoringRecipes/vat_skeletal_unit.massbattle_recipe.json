@@ -5,17 +5,23 @@
   "description": "Create or refresh a MassBattle unit from a purchased skeletal mesh using the existing MassBattle editor conversion pipeline.",
   "style_profile": "default",
   "input_schema": {
-    "template_unit": "Existing UMassBattleAgentConfigDataAsset used as the base unit.",
+    "template_unit": "Existing UMassBattleAgentConfigDataAsset used as the base unit. Optional when the selected style has default_unit_template/default_unit_templates; the plan returns a warning when it defaults this.",
     "skeletal_mesh": "Purchased USkeletalMesh asset path.",
-    "asset_slug": "Stable unit slug used for generated asset names.",
+    "unit_name": "Stable unit name used for generated asset names.",
     "family": "Optional organization family from the style profile.",
-    "animation_search_path": "Path used by FindAndFillAnimSequences.",
+    "animation_search_path": "Path used by FindAndFillAnimSequences. Defaults to the source mesh package path when omitted.",
+    "animation_name_filter": "Optional name filter for FindAndFillAnimSequences. When omitted, MCP uses an empty filter to include all same-skeleton animations in the search path and returns a warning.",
+    "animations": "Optional explicit animation category map such as {\"idle\": [AnimPath], \"appear\": [AnimPath], \"death\": [AnimPath]}; mirrors filling the MassBattleTools animation arrays before DoAll. If automatic categorization finds no named states, MCP falls back to same-skeleton AnimSequences and warns that this map should be supplied.",
+    "vat_sample_rate": "VAT sampling rate. Defaults to 24 for MCP-generated VAT units; runtime can still interpolate.",
+    "vat_uv_channel": "StaticMesh UV channel used by AnimToTexture. Defaults to 1.",
     "texture_search_path": "Path used by FindAndFillOriginalTextures.",
-    "parent_material": "Optional parent material for generated material instances.",
+    "parent_material": "Optional parent material for generated material instances. Defaults to the style default or /MassBattle/Core/AgentRenderer/VAT/M_VATMaster.",
     "material_overrides": "Optional array of material paths or {slot_index, slot_name, slot_name_contains, material} objects applied to the generated StaticMesh after material instance generation.",
-    "source_renderer_class": "Renderer Blueprint generated class used as the template when duplicating a renderer.",
-    "niagara_system": "Optional Niagara system assigned to the renderer defaults.",
+    "source_renderer_class": "Renderer Blueprint generated class used as the template when duplicating a renderer. Defaults to the MassBattle AgentRenderer template.",
+    "niagara_system": "Optional Niagara system assigned to the renderer defaults. Defaults to the MassBattle AgentRenderer template Niagara system.",
     "unit_patch": "Union-merge patch applied to the cloned or target unit DataAsset.",
+    "target_package_path": "Optional override for the generated content package path.",
+    "target_unit_package_path": "Optional override for the generated unit DataAsset package path.",
     "output_root": "Optional override for generated content root."
   },
   "pipeline": [
@@ -32,7 +38,7 @@
     {
       "id": "find_animations",
       "tool": "MCP_FindAndFillAnimSequences",
-      "description": "Find animation sequences that share the mesh skeleton."
+      "description": "Find animation sequences that share the mesh skeleton; if name-based categorization is empty, fall back to compatible AnimSequences and return warnings for explicit state mapping."
     },
     {
       "id": "convert_mesh",
@@ -48,6 +54,21 @@
       "id": "apply_material_overrides",
       "tool": "MCP_EditorApplyCreateVatUnit.material_overrides",
       "description": "Override generated StaticMesh material slots with explicit materials when a skin package should replace the source mesh materials."
+    },
+    {
+      "id": "create_vat_data_and_textures",
+      "tool": "MassBattleTools.CreateDataAsset/CreateVATTextures",
+      "description": "Create or reuse the AnimToTexture DataAsset and HDR VAT texture assets exactly like the MassBattleTools DoAll flow."
+    },
+    {
+      "id": "bake_vat_textures",
+      "tool": "UAnimToTextureBPLibrary.AnimationToTexture",
+      "description": "Bake the filled animation arrays into VAT textures at the configured sample rate."
+    },
+    {
+      "id": "update_vat_materials",
+      "tool": "UAnimToTextureBPLibrary.UpdateMaterialInstanceFromDataAsset",
+      "description": "Apply baked texture parameters, AnimDataTex, and MassBattle VAT static switches to generated material instances."
     },
     {
       "id": "create_anim_data",

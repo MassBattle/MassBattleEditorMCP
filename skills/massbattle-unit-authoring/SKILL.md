@@ -11,15 +11,31 @@ Use UE editor APIs, commandlets, or the MassBattleEditorMCP tools. Do not edit `
 
 1. List or locate units with the Unit MCP discovery tools, scoped to style roots such as `/Game/Unit`, `/Game/Toon_Soldiers_WW2`, `/Game/StylizedArmyPackA`, and `/Game/World_Flags`.
 2. Read normal unit data with simple JSON first. Request detailed mode or a specific object only for complex fields such as `Attack`, `Visualize`, `LODShared`, or `AnimShared`.
-3. Apply edits through `unit_write`; omitted fields must remain unchanged. Use `unit_delete` for explicit deletes.
+3. Apply edits through `MCP_UnitPlanMergeUpdate` then `MCP_UnitApplyPlan`; omitted fields must remain unchanged. Use `MCP_UnitDelete` for planned deletes.
 4. For array fields such as `Attack.SpawnProjectile`, `Attack.SpawnFx`, and `Attack.PlaySound`, union merge can append missing elements by default. Pass `append_arrays=false` only when append should be rejected.
 
 ## Create Unit
 
-1. Discover source assets first: source skeletal mesh, compatible renderer Blueprint class, Niagara system, material/skin, animation search roots, and a template unit.
-2. Use `unit_create` when a new unit DataAsset is needed; omit `template_unit` only when the project default template is configured.
-3. Use editor VAT tools only for the mesh/material/renderer authoring steps that cannot be expressed as unit reads, creates, writes, or deletes.
-4. Read back the generated unit with `MCP_UnitGet` and verify asset existence, renderer class, material slot, attack enabled state, projectile/effect arrays, range, damage, and subtype.
+1. If the user says they selected assets in the editor, or asks for "current/selected -> generate", prefer `MCP_EditorPlanCreateVatUnitFromSelection` then `MCP_EditorApplyCreateVatUnitFromSelection`. These tools infer `skeletal_mesh`, target/template unit, selected animations, materials, VAT data asset, Niagara, and renderer template from current selection or an explicit `selected_assets` list.
+2. Otherwise use `MCP_EditorPlanCreateVatUnit` for VAT/static-mesh unit creation. It resolves style defaults for package layout, template unit, VAT parent material, renderer template, Niagara system, sample rate, and animation search roots.
+3. Inspect `warnings` from the plan. Defaulted fields are allowed, but warnings are work items for the AI to refine when the result needs exact art or behavior.
+4. Run `MCP_EditorValidateCreateVatUnit` for explicit specs. Apply with `MCP_EditorApplyCreateVatUnit` when `valid=true`; use `overwrite_existing=true` for repeatable editor runs.
+5. When animation names are nonstandard, pass an explicit `animations` category map. The editor MCP can fall back to same-skeleton AnimSequences, but it will warn because the state mapping is guessed.
+6. Read back the generated unit with `MCP_UnitGet` and verify asset existence, renderer class, material slot, attack enabled state, projectile/effect arrays, range, damage, and subtype.
+7. VAT create specs use `unit_name`, `target_package_path`, and `target_unit_package_path` as the canonical output naming fields. Do not use older field names for these concepts.
+
+## Default-Tolerant Create
+
+The editor MCP should still create a runnable unit when an AI command is incomplete, as long as a skeletal mesh is provided and referenced assets can load.
+
+- Missing `template_unit`: use the style family default from `authoring_defaults.default_unit_templates`; otherwise use `authoring_defaults.default_unit_template`.
+- Missing `parent_material`: use `/MassBattle/Core/AgentRenderer/VAT/M_VATMaster.M_VATMaster`.
+- Missing `source_renderer_class`: use `/MassBattle/Core/AgentRenderer/BP_AgentRenderer_Template.BP_AgentRenderer_Template_C`.
+- Missing `niagara_system`: use `/MassBattle/Core/AgentRenderer/NS_AgentRenderer_Template.NS_AgentRenderer_Template`.
+- Missing `animation_name_filter`: use an empty filter and scan same-skeleton AnimSequences under `animation_search_path`.
+- If automatic animation categorization is empty, accept compatible AnimSequences as a fallback and return a warning asking the AI to provide explicit `animations`.
+- If no animation can be found, default apply may continue as a static fallback and return `warning_static_fallback`; set `allow_static_fallback=false` when an animated VAT bake is mandatory.
+- Selection-based tools accept `selected_assets` to simulate current editor selection in scripted runs. Select a unit plus a mesh to patch that unit; pass `selected_unit_role="template"` when the selected unit should be cloned instead.
 
 ## Defaults
 
@@ -90,4 +106,4 @@ Known validated examples in Winyunq:
 
 ## Verification
 
-Run the UE editor commandlet for deterministic validation when possible. A successful create pass should show `plan_success`, `validate_valid`, `apply_success`, `read_after_success`, and asset existence as true. Infantry/officer attack validation should confirm at least one projectile and one attack FX entry.
+Run the UE editor commandlet for deterministic validation when possible. A successful create pass should show `plan_success`, `validate_valid`, `apply_success`, `read_after_success`, and asset existence as true. Also inspect `warnings` and `execution_steps`; do not claim exact animation/state correctness if the result used fallback animation mapping. Infantry/officer attack validation should confirm at least one projectile and one attack FX entry.

@@ -31,6 +31,28 @@ def _json_arg(value: Any, default: str = "{}") -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _json_arg_with_defaults(value: Any, defaults: Dict[str, Any]) -> str:
+    if value is None:
+        return json.dumps(defaults, ensure_ascii=False)
+    if isinstance(value, dict):
+        merged = dict(defaults)
+        merged.update(value)
+        return json.dumps(merged, ensure_ascii=False)
+    if isinstance(value, str):
+        if not value.strip():
+            return json.dumps(defaults, ensure_ascii=False)
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return value
+        if isinstance(parsed, dict):
+            merged = dict(defaults)
+            merged.update(parsed)
+            return json.dumps(merged, ensure_ascii=False)
+        return value
+    return _json_arg(value)
+
+
 class UnrealConnection:
     async def send_command(self, command: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         try:
@@ -197,6 +219,49 @@ async def editor_get_profile(profile_type: str, profile_id: str) -> Dict[str, An
     return await get_connection().send_command(
         "MCP_EditorGetProfile",
         {"ProfileType": profile_type, "ProfileId": profile_id},
+    )
+
+
+@mcp.tool()
+async def editor_plan_create_vat_unit(spec: Any) -> Dict[str, Any]:
+    """Plan VAT unit authoring, resolving style defaults and returning warnings for inferred or incomplete inputs."""
+    return await get_connection().send_command("MCP_EditorPlanCreateVatUnit", {"SpecJson": _json_arg(spec)})
+
+
+@mcp.tool()
+async def editor_validate_create_vat_unit(spec: Any) -> Dict[str, Any]:
+    """Validate VAT unit authoring readiness, including defaulted fields and warnings that should be reviewed."""
+    return await get_connection().send_command("MCP_EditorValidateCreateVatUnit", {"SpecJson": _json_arg(spec)})
+
+
+@mcp.tool()
+async def editor_apply_create_vat_unit(spec: Any, save_assets: bool = True) -> Dict[str, Any]:
+    """Execute VAT unit authoring using resolved defaults; warnings in the result identify fields the AI should refine."""
+    return await get_connection().send_command(
+        "MCP_EditorApplyCreateVatUnit",
+        {"SpecJson": _json_arg(spec), "bSaveAssets": save_assets},
+    )
+
+
+@mcp.tool()
+async def editor_plan_create_vat_unit_from_selection(options: Any = None) -> Dict[str, Any]:
+    """Build a VAT unit create spec from current editor selection or selected_assets, then return a reviewable plan."""
+    return await get_connection().send_command(
+        "MCP_EditorPlanCreateVatUnitFromSelection",
+        {"OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def editor_apply_create_vat_unit_from_selection(
+    options: Any = None,
+    save_assets: bool = True,
+    compact_response: bool = True,
+) -> Dict[str, Any]:
+    """Build a VAT unit create spec from current editor selection or selected_assets, then execute the create workflow."""
+    return await get_connection().send_command(
+        "MCP_EditorApplyCreateVatUnitFromSelection",
+        {"OptionsJson": _json_arg_with_defaults(options, {"compact_response": compact_response}), "bSaveAssets": save_assets},
     )
 
 

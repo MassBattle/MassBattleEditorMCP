@@ -1,19 +1,32 @@
 // Copyright (c) 2025-2026 Winyunq. All rights reserved.
 #include "MassBattleUnitEditorMCPApi.h"
 
+#include "Animation/AnimSequence.h"
+#include "Animation/Skeleton.h"
+#include "AnimToTextureBPLibrary.h"
+#include "AnimToTextureDataAsset.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "DataAssets/MassBattleAgentConfigDataAsset.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Editor.h"
+#include "Engine/Blueprint.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
+#include "Engine/Selection.h"
 #include "HAL/FileManager.h"
 #include "IAssetTools.h"
 #include "MassBattleEditorMCPApi.h"
+#include "MassBattleFuncLibEd.h"
 #include "MassBattleUnitMCPApi.h"
+#include "MaterialEditingLibrary.h"
+#include "Materials/MaterialInstanceConstant.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "NiagaraSystem.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -25,6 +38,10 @@ DEFINE_LOG_CATEGORY(LogMassBattleUnitEditorMCPApi);
 
 namespace MassBattleUnitEditorMCP
 {
+static constexpr TCHAR DefaultVatParentMaterialPath[] = TEXT("/MassBattle/Core/AgentRenderer/VAT/M_VATMaster.M_VATMaster");
+static constexpr TCHAR DefaultAgentRendererClassPath[] = TEXT("/MassBattle/Core/AgentRenderer/BP_AgentRenderer_Template.BP_AgentRenderer_Template_C");
+static constexpr TCHAR DefaultAgentRendererNiagaraPath[] = TEXT("/MassBattle/Core/AgentRenderer/NS_AgentRenderer_Template.NS_AgentRenderer_Template");
+
 static FString ToJsonString(const TSharedPtr<FJsonObject>& Root)
 {
 	FString Output;
@@ -677,6 +694,665 @@ static TArray<FString> StringArrayField(const TSharedPtr<FJsonObject>& Object, c
 	return Result;
 }
 
+static bool TryGetNumberByNames(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames, double& OutValue)
+{
+	if (!Object.IsValid())
+	{
+		return false;
+	}
+
+	for (const FString& FieldName : FieldNames)
+	{
+		if (Object->TryGetNumberField(FieldName, OutValue))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static float FloatFieldByNamesOrDefault(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames, float DefaultValue)
+{
+	double Value = DefaultValue;
+	return TryGetNumberByNames(Object, FieldNames, Value) ? static_cast<float>(Value) : DefaultValue;
+}
+
+static int32 IntFieldByNamesOrDefault(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames, int32 DefaultValue)
+{
+	double Value = DefaultValue;
+	return TryGetNumberByNames(Object, FieldNames, Value) ? static_cast<int32>(Value) : DefaultValue;
+}
+
+static bool BoolFieldByNamesOrDefault(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames, bool bDefaultValue)
+{
+	if (!Object.IsValid())
+	{
+		return bDefaultValue;
+	}
+
+	bool bValue = bDefaultValue;
+	for (const FString& FieldName : FieldNames)
+	{
+		if (Object->TryGetBoolField(FieldName, bValue))
+		{
+			return bValue;
+		}
+	}
+	return bDefaultValue;
+}
+
+static void AppendAnimPath(UAnimSequence* AnimSequence, TArray<TObjectPtr<UAnimSequence>>& OutArray)
+{
+	if (AnimSequence)
+	{
+		OutArray.AddUnique(AnimSequence);
+	}
+}
+
+static void AppendAnimArrayField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, TArray<TObjectPtr<UAnimSequence>>& OutArray)
+{
+	if (!Object.IsValid())
+	{
+		return;
+	}
+
+	FString SinglePath;
+	if (Object->TryGetStringField(FieldName, SinglePath) && !SinglePath.IsEmpty())
+	{
+		AppendAnimPath(Cast<UAnimSequence>(FSoftObjectPath(EnsureObjectPath(SinglePath)).TryLoad()), OutArray);
+		return;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Array = nullptr;
+	if (!Object->TryGetArrayField(FieldName, Array) || !Array)
+	{
+		return;
+	}
+
+	for (const TSharedPtr<FJsonValue>& Value : *Array)
+	{
+		FString Path;
+		if (Value.IsValid() && Value->TryGetString(Path) && !Path.IsEmpty())
+		{
+			AppendAnimPath(Cast<UAnimSequence>(FSoftObjectPath(EnsureObjectPath(Path)).TryLoad()), OutArray);
+		}
+	}
+}
+
+static void AppendAnimCategoryFields(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames, TArray<TObjectPtr<UAnimSequence>>& OutArray)
+{
+	for (const FString& FieldName : FieldNames)
+	{
+		AppendAnimArrayField(Object, FieldName, OutArray);
+	}
+}
+
+static void AppendFoundAnimsFromObject(const TSharedPtr<FJsonObject>& Object, FFoundAnimSequences& OutAnims)
+{
+	AppendAnimCategoryFields(Object, { TEXT("Idle"), TEXT("idle"), TEXT("idle_anims"), TEXT("idle_animations") }, OutAnims.Idle);
+	AppendAnimCategoryFields(Object, { TEXT("Move"), TEXT("move"), TEXT("move_anims"), TEXT("move_animations") }, OutAnims.Move);
+	AppendAnimCategoryFields(Object, { TEXT("Fall"), TEXT("fall"), TEXT("fall_anims"), TEXT("fall_animations") }, OutAnims.Fall);
+	AppendAnimCategoryFields(Object, { TEXT("Appear"), TEXT("appear"), TEXT("appear_anims"), TEXT("appear_animations"), TEXT("raise"), TEXT("raise_anims") }, OutAnims.Appear);
+	AppendAnimCategoryFields(Object, { TEXT("Attack"), TEXT("attack"), TEXT("attack_anims"), TEXT("attack_animations") }, OutAnims.Attack);
+	AppendAnimCategoryFields(Object, { TEXT("Hit"), TEXT("hit"), TEXT("hit_anims"), TEXT("hit_animations"), TEXT("hurt"), TEXT("hurt_anims") }, OutAnims.Hit);
+	AppendAnimCategoryFields(Object, { TEXT("Death"), TEXT("death"), TEXT("death_anims"), TEXT("death_animations"), TEXT("lower"), TEXT("lower_anims") }, OutAnims.Death);
+	AppendAnimCategoryFields(Object, { TEXT("Other"), TEXT("other"), TEXT("other_anims"), TEXT("other_animations") }, OutAnims.Other);
+}
+
+static FFoundAnimSequences BuildFoundAnimsForBake(const TSharedPtr<FJsonObject>& Discovery, const TSharedPtr<FJsonObject>& Spec)
+{
+	FFoundAnimSequences FoundAnims;
+
+	const TSharedPtr<FJsonObject>* AnimDiscovery = nullptr;
+	if (Discovery.IsValid() && Discovery->TryGetObjectField(TEXT("animations"), AnimDiscovery) && AnimDiscovery && AnimDiscovery->IsValid())
+	{
+		const TSharedPtr<FJsonObject>* AutoAnims = nullptr;
+		if ((*AnimDiscovery)->TryGetObjectField(TEXT("anims"), AutoAnims) && AutoAnims && AutoAnims->IsValid())
+		{
+			AppendFoundAnimsFromObject(*AutoAnims, FoundAnims);
+		}
+	}
+
+	AppendFoundAnimsFromObject(Spec, FoundAnims);
+
+	for (const FString& FieldName : { TEXT("animations"), TEXT("found_anims"), TEXT("found_animations"), TEXT("anim_sequences") })
+	{
+		const TSharedPtr<FJsonObject>* AnimOverride = nullptr;
+		if (Spec.IsValid() && Spec->TryGetObjectField(FieldName, AnimOverride) && AnimOverride && AnimOverride->IsValid())
+		{
+			AppendFoundAnimsFromObject(*AnimOverride, FoundAnims);
+		}
+	}
+
+	return FoundAnims;
+}
+
+static FString SerializeFoundAnimsLocal(const FFoundAnimSequences& Anims)
+{
+	auto SerializeAnimArray = [](const TArray<TObjectPtr<UAnimSequence>>& AnimArray) -> TArray<TSharedPtr<FJsonValue>>
+	{
+		TArray<TSharedPtr<FJsonValue>> Values;
+		for (const TObjectPtr<UAnimSequence>& Anim : AnimArray)
+		{
+			if (Anim)
+			{
+				Values.Add(MakeShared<FJsonValueString>(Anim->GetPathName()));
+			}
+		}
+		return Values;
+	};
+
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetArrayField(TEXT("Idle"), SerializeAnimArray(Anims.Idle));
+	Root->SetArrayField(TEXT("Move"), SerializeAnimArray(Anims.Move));
+	Root->SetArrayField(TEXT("Fall"), SerializeAnimArray(Anims.Fall));
+	Root->SetArrayField(TEXT("Appear"), SerializeAnimArray(Anims.Appear));
+	Root->SetArrayField(TEXT("Attack"), SerializeAnimArray(Anims.Attack));
+	Root->SetArrayField(TEXT("Hit"), SerializeAnimArray(Anims.Hit));
+	Root->SetArrayField(TEXT("Death"), SerializeAnimArray(Anims.Death));
+	Root->SetArrayField(TEXT("Other"), SerializeAnimArray(Anims.Other));
+	return ToJsonString(Root);
+}
+
+static void AppendAllFoundAnimSequences(const FFoundAnimSequences& FoundAnims, TArray<UAnimSequence*>& OutSequences)
+{
+	auto AppendArray = [&OutSequences](const TArray<TObjectPtr<UAnimSequence>>& Source)
+	{
+		for (const TObjectPtr<UAnimSequence>& Anim : Source)
+		{
+			if (Anim)
+			{
+				OutSequences.AddUnique(Anim.Get());
+			}
+		}
+	};
+
+	AppendArray(FoundAnims.Idle);
+	AppendArray(FoundAnims.Move);
+	AppendArray(FoundAnims.Fall);
+	AppendArray(FoundAnims.Appear);
+	AppendArray(FoundAnims.Attack);
+	AppendArray(FoundAnims.Hit);
+	AppendArray(FoundAnims.Death);
+	AppendArray(FoundAnims.Other);
+}
+
+static bool FoundAnimsHasEntries(const FFoundAnimSequences& FoundAnims)
+{
+	return !FoundAnims.Idle.IsEmpty()
+		|| !FoundAnims.Move.IsEmpty()
+		|| !FoundAnims.Fall.IsEmpty()
+		|| !FoundAnims.Appear.IsEmpty()
+		|| !FoundAnims.Attack.IsEmpty()
+		|| !FoundAnims.Hit.IsEmpty()
+		|| !FoundAnims.Death.IsEmpty()
+		|| !FoundAnims.Other.IsEmpty();
+}
+
+static EVATBakeMode ParseVatBakeMode(const TSharedPtr<FJsonObject>& Object, EVATBakeMode DefaultMode)
+{
+	if (!Object.IsValid())
+	{
+		return DefaultMode;
+	}
+
+	FString ModeText;
+	if (Object->TryGetStringField(TEXT("Mode"), ModeText) || Object->TryGetStringField(TEXT("mode"), ModeText))
+	{
+		if (ModeText.Contains(TEXT("Bone"), ESearchCase::IgnoreCase))
+		{
+			return EVATBakeMode::BoneMode;
+		}
+		if (ModeText.Contains(TEXT("Vertex"), ESearchCase::IgnoreCase))
+		{
+			return EVATBakeMode::VertexMode;
+		}
+	}
+
+	double ModeNumber = static_cast<double>(static_cast<uint8>(DefaultMode));
+	if (Object->TryGetNumberField(TEXT("Mode"), ModeNumber) || Object->TryGetNumberField(TEXT("mode"), ModeNumber))
+	{
+		return static_cast<EVATBakeMode>(static_cast<uint8>(ModeNumber));
+	}
+	return DefaultMode;
+}
+
+static TArray<FLODDataEd> ParseLODSettingsForBake(const TSharedPtr<FJsonObject>& Spec, const TSharedPtr<FJsonObject>& Discovery)
+{
+	const TArray<TSharedPtr<FJsonValue>>* LodArray = nullptr;
+	if (!Spec.IsValid() || !Spec->TryGetArrayField(TEXT("lod_settings"), LodArray))
+	{
+		const TSharedPtr<FJsonObject>* LodDiscovery = nullptr;
+		if (Discovery.IsValid() && Discovery->TryGetObjectField(TEXT("lod_settings"), LodDiscovery) && LodDiscovery && LodDiscovery->IsValid())
+		{
+			(*LodDiscovery)->TryGetArrayField(TEXT("lod_settings"), LodArray);
+		}
+	}
+
+	TArray<FLODDataEd> Settings;
+	if (LodArray)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *LodArray)
+		{
+			if (!Value.IsValid() || Value->Type != EJson::Object)
+			{
+				continue;
+			}
+
+			TSharedPtr<FJsonObject> Item = Value->AsObject();
+			FLODDataEd LOD;
+			double Number = 0.0;
+			if (Item->TryGetNumberField(TEXT("ScreenSize"), Number) || Item->TryGetNumberField(TEXT("screen_size"), Number))
+			{
+				LOD.ScreenSize = static_cast<float>(Number);
+			}
+			if (Item->TryGetNumberField(TEXT("LODIndex"), Number) || Item->TryGetNumberField(TEXT("lod_index"), Number))
+			{
+				LOD.LODIndex = static_cast<int32>(Number);
+			}
+			if (Item->TryGetNumberField(TEXT("AnimBlendLevel"), Number) || Item->TryGetNumberField(TEXT("anim_blend_level"), Number))
+			{
+				LOD.AnimBlendLevel = FMath::Clamp(static_cast<int32>(Number), 1, 3);
+			}
+			LOD.Mode = ParseVatBakeMode(Item, LOD.Mode);
+			Settings.Add(LOD);
+		}
+	}
+
+	if (Settings.IsEmpty())
+	{
+		FLODDataEd DefaultLOD;
+		DefaultLOD.LODIndex = 0;
+		DefaultLOD.ScreenSize = 0.0f;
+		DefaultLOD.AnimBlendLevel = 2;
+		DefaultLOD.Mode = EVATBakeMode::VertexMode;
+		Settings.Add(DefaultLOD);
+	}
+	return Settings;
+}
+
+static int32 GetStaticMeshLODCount(UStaticMesh* StaticMesh)
+{
+	if (!StaticMesh)
+	{
+		return 0;
+	}
+
+	int32 LODCount = StaticMesh->GetNumSourceModels();
+	if (LODCount <= 0 && StaticMesh->GetRenderData())
+	{
+		LODCount = StaticMesh->GetRenderData()->LODResources.Num();
+	}
+	return FMath::Max(0, LODCount);
+}
+
+static TSharedPtr<FJsonObject> BuildRenderLodObjectFromSettings(const TArray<FLODDataEd>& LODSettings)
+{
+	TSharedPtr<FJsonObject> RenderLOD = MakeShared<FJsonObject>();
+	for (int32 Index = 0; Index < LODSettings.Num(); ++Index)
+	{
+		const FLODDataEd& LOD = LODSettings[Index];
+		TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+		Data->SetNumberField(TEXT("LODIndex"), LOD.LODIndex);
+		Data->SetNumberField(TEXT("ScreenSize"), LOD.ScreenSize);
+		Data->SetNumberField(TEXT("AnimBlendLevel"), LOD.AnimBlendLevel);
+		RenderLOD->SetObjectField(FString::Printf(TEXT("Data%d"), Index), Data);
+	}
+	return RenderLOD;
+}
+
+static void SetUnitPatchRenderLodFromSettings(TSharedPtr<FJsonObject> UnitPatch, const TArray<FLODDataEd>& LODSettings)
+{
+	if (!UnitPatch.IsValid() || LODSettings.IsEmpty())
+	{
+		return;
+	}
+
+	TSharedPtr<FJsonObject> Data = GetOrCreateObjectField(UnitPatch, TEXT("Data"));
+	TSharedPtr<FJsonObject> LodShared = GetOrCreateObjectField(Data, TEXT("LODShared"));
+	LodShared->SetObjectField(TEXT("RenderLOD"), BuildRenderLodObjectFromSettings(LODSettings));
+}
+
+static UTexture2D* CreateOrLoadTexture2DAsset(const FString& PackagePath, const FString& AssetName, TArray<FString>& OutSavePaths)
+{
+	const FString ObjectPath = MakeObjectPath(PackagePath, AssetName);
+	if (UTexture2D* Existing = Cast<UTexture2D>(FSoftObjectPath(EnsureObjectPath(ObjectPath)).TryLoad()))
+	{
+		OutSavePaths.AddUnique(Existing->GetPathName());
+		return Existing;
+	}
+
+	const FString PackageName = PackagePath / AssetName;
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!Package)
+	{
+		return nullptr;
+	}
+	Package->FullyLoad();
+
+	UTexture2D* Texture = NewObject<UTexture2D>(Package, *AssetName, RF_Public | RF_Standalone);
+	if (!Texture)
+	{
+		return nullptr;
+	}
+
+	Texture->SRGB = false;
+	Texture->CompressionSettings = TextureCompressionSettings::TC_HDR;
+	Texture->Filter = TextureFilter::TF_Nearest;
+	Texture->MipGenSettings = TextureMipGenSettings::TMGS_NoMipmaps;
+	Texture->MarkPackageDirty();
+	FAssetRegistryModule::AssetCreated(Texture);
+	OutSavePaths.AddUnique(Texture->GetPathName());
+	return Texture;
+}
+
+static UAnimToTextureDataAsset* CreateOrLoadAnimToTextureDataAsset(const FString& PackagePath, const FString& AssetName, TArray<FString>& OutSavePaths)
+{
+	const FString ObjectPath = MakeObjectPath(PackagePath, AssetName);
+	if (UAnimToTextureDataAsset* Existing = Cast<UAnimToTextureDataAsset>(FSoftObjectPath(EnsureObjectPath(ObjectPath)).TryLoad()))
+	{
+		OutSavePaths.AddUnique(Existing->GetPathName());
+		return Existing;
+	}
+
+	const FString PackageName = PackagePath / AssetName;
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!Package)
+	{
+		return nullptr;
+	}
+	Package->FullyLoad();
+
+	UAnimToTextureDataAsset* DataAsset = NewObject<UAnimToTextureDataAsset>(Package, *AssetName, RF_Public | RF_Standalone);
+	if (!DataAsset)
+	{
+		return nullptr;
+	}
+
+	DataAsset->MarkPackageDirty();
+	FAssetRegistryModule::AssetCreated(DataAsset);
+	OutSavePaths.AddUnique(DataAsset->GetPathName());
+	return DataAsset;
+}
+
+static void SetMaterialStaticSwitch(UMaterialInstanceConstant* MaterialInstance, const FName ParameterName, bool bValue)
+{
+	UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MaterialInstance, ParameterName, bValue, EMaterialParameterAssociation::LayerParameter);
+}
+
+static int32 UpdateVatMaterialsForLOD(UStaticMesh* StaticMesh, UAnimToTextureDataAsset* DataAsset, UTexture2D* AnimDataTexture, const FLODDataEd& LOD)
+{
+	if (!StaticMesh || !DataAsset)
+	{
+		return 0;
+	}
+
+	int32 UpdatedCount = 0;
+	const FString LodToken = FString::Printf(TEXT("LOD%d"), LOD.LODIndex);
+	for (const FStaticMaterial& StaticMaterial : StaticMesh->GetStaticMaterials())
+	{
+		if (!StaticMaterial.MaterialInterface)
+		{
+			continue;
+		}
+
+		const FString SlotName = StaticMaterial.MaterialSlotName.ToString();
+		if (!SlotName.Contains(LodToken, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		UMaterialInstanceConstant* MaterialInstance = Cast<UMaterialInstanceConstant>(StaticMaterial.MaterialInterface);
+		if (!MaterialInstance)
+		{
+			continue;
+		}
+
+		UAnimToTextureBPLibrary::UpdateMaterialInstanceFromDataAsset(DataAsset, MaterialInstance, EMaterialParameterAssociation::LayerParameter);
+		if (AnimDataTexture)
+		{
+			UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(MaterialInstance, TEXT("AnimDataTex"), AnimDataTexture, EMaterialParameterAssociation::LayerParameter);
+		}
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("BoneMode"), LOD.Mode == EVATBakeMode::BoneMode);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseTwoInfluences"), true);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseFourInfluences"), false);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseBlend2"), LOD.AnimBlendLevel == 2 || LOD.AnimBlendLevel == 3);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseBlend3"), LOD.AnimBlendLevel == 3);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("DebugMode"), false);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("LegacyAnimData"), false);
+		UMaterialEditingLibrary::UpdateMaterialInstance(MaterialInstance);
+		MaterialInstance->MarkPackageDirty();
+		++UpdatedCount;
+	}
+	return UpdatedCount;
+}
+
+static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
+	const TSharedPtr<FJsonObject>& Spec,
+	const TSharedPtr<FJsonObject>& Discovery,
+	const FString& SkeletalMeshPath,
+	const FString& StaticMeshPath,
+	const FString& GeneratedPackagePath,
+	const FString& AssetSlug,
+	const FString& VatDataAssetName,
+	TSharedPtr<FJsonObject> UnitPatch,
+	TArray<FString>& OutSavePaths)
+{
+	TSharedPtr<FJsonObject> Root = MakeSuccess();
+
+	USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(FSoftObjectPath(EnsureObjectPath(SkeletalMeshPath)).TryLoad());
+	UStaticMesh* StaticMesh = Cast<UStaticMesh>(FSoftObjectPath(EnsureObjectPath(StaticMeshPath)).TryLoad());
+	if (!SkeletalMesh || !StaticMesh)
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("Failed to load SkeletalMesh or StaticMesh for VAT bake."));
+		return Root;
+	}
+
+	const float SampleRate = FloatFieldByNamesOrDefault(Spec, { TEXT("vat_sample_rate"), TEXT("sample_rate"), TEXT("VATSampleRate") }, 24.0f);
+	const int32 UVChannel = FMath::Clamp(IntFieldByNamesOrDefault(Spec, { TEXT("vat_uv_channel"), TEXT("uv_channel"), TEXT("VATUVChannel") }, 1), 0, 3);
+	const bool bEnforcePowerOfTwo = BoolFieldByNamesOrDefault(Spec, { TEXT("enforce_power_of_two"), TEXT("EnforcePowerOfTwo") }, false);
+	const int32 MaxHeight = FMath::Max(1, IntFieldByNamesOrDefault(Spec, { TEXT("vat_max_height"), TEXT("max_height") }, 8192));
+	const int32 MaxWidth = FMath::Max(1, IntFieldByNamesOrDefault(Spec, { TEXT("vat_max_width"), TEXT("max_width") }, 8192));
+
+	UAnimToTextureDataAsset* DataAsset = CreateOrLoadAnimToTextureDataAsset(GeneratedPackagePath, VatDataAssetName, OutSavePaths);
+	if (!DataAsset)
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("Failed to create or load AnimToTextureDataAsset."));
+		return Root;
+	}
+
+	const FFoundAnimSequences FoundAnims = BuildFoundAnimsForBake(Discovery, Spec);
+	TArray<UAnimSequence*> BakeSequences;
+	AppendAllFoundAnimSequences(FoundAnims, BakeSequences);
+	if (BakeSequences.IsEmpty())
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("No animation sequences were provided or discovered for VAT bake."));
+		return Root;
+	}
+
+	DataAsset->Modify();
+	DataAsset->SkeletalMesh = SkeletalMesh;
+	DataAsset->StaticMesh = StaticMesh;
+	DataAsset->UVChannel = UVChannel;
+	DataAsset->bEnforcePowerOfTwo = bEnforcePowerOfTwo;
+	DataAsset->Precision = EAnimToTexturePrecision::SixteenBits;
+	DataAsset->MaxHeight = MaxHeight;
+	DataAsset->MaxWidth = MaxWidth;
+	DataAsset->SampleRate = SampleRate;
+	DataAsset->AnimSequences.Reset();
+	for (UAnimSequence* AnimSequence : BakeSequences)
+	{
+		FAnimToTextureAnimSequenceInfo Info;
+		Info.bEnabled = true;
+		Info.AnimSequence = AnimSequence;
+		DataAsset->AnimSequences.Add(Info);
+	}
+
+	const TArray<FLODDataEd> RequestedLODSettings = ParseLODSettingsForBake(Spec, Discovery);
+	const int32 StaticMeshLODCount = GetStaticMeshLODCount(StaticMesh);
+	TArray<TSharedPtr<FJsonValue>> LodResults;
+	TArray<TSharedPtr<FJsonValue>> Warnings;
+	auto AddBakeWarning = [](TArray<TSharedPtr<FJsonValue>>& TargetWarnings, const FString& Code, const FString& Message, const FString& Field)
+	{
+		TSharedPtr<FJsonObject> Warning = MakeShared<FJsonObject>();
+		Warning->SetStringField(TEXT("severity"), TEXT("warning"));
+		Warning->SetStringField(TEXT("code"), Code);
+		Warning->SetStringField(TEXT("message"), Message);
+		if (!Field.IsEmpty())
+		{
+			Warning->SetStringField(TEXT("field"), Field);
+		}
+		TargetWarnings.Add(MakeShared<FJsonValueObject>(Warning));
+	};
+	TArray<FLODDataEd> LODSettings;
+	for (const FLODDataEd& LOD : RequestedLODSettings)
+	{
+		if (LOD.LODIndex < 0 || LOD.LODIndex >= StaticMeshLODCount)
+		{
+			TSharedPtr<FJsonObject> Skipped = MakeShared<FJsonObject>();
+			Skipped->SetNumberField(TEXT("lod_index"), LOD.LODIndex);
+			Skipped->SetStringField(TEXT("status"), TEXT("skipped_invalid_static_lod"));
+			Skipped->SetStringField(TEXT("reason"), FString::Printf(TEXT("Generated StaticMesh has %d LOD(s); LOD %d cannot be baked."), StaticMeshLODCount, LOD.LODIndex));
+			LodResults.Add(MakeShared<FJsonValueObject>(Skipped));
+			AddBakeWarning(Warnings, TEXT("skipped_invalid_static_lod"), FString::Printf(TEXT("Skipped VAT bake for LOD %d because the generated StaticMesh has %d LOD(s)."), LOD.LODIndex, StaticMeshLODCount), TEXT("lod_settings"));
+			continue;
+		}
+		LODSettings.Add(LOD);
+	}
+
+	if (LODSettings.IsEmpty() && StaticMeshLODCount > 0)
+	{
+		FLODDataEd FallbackLOD;
+		if (!RequestedLODSettings.IsEmpty())
+		{
+			FallbackLOD = RequestedLODSettings[0];
+		}
+		FallbackLOD.LODIndex = 0;
+		LODSettings.Add(FallbackLOD);
+		AddBakeWarning(Warnings, TEXT("defaulted_bake_lod0"), TEXT("No requested LOD matched the generated StaticMesh; VAT bake fell back to LOD 0."), TEXT("lod_settings"));
+	}
+
+	if (LODSettings.IsEmpty())
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("Generated StaticMesh has no LODs available for VAT bake."));
+		Root->SetNumberField(TEXT("static_lod_count"), StaticMeshLODCount);
+		Root->SetArrayField(TEXT("lod_results"), LodResults);
+		Root->SetArrayField(TEXT("warnings"), Warnings);
+		return Root;
+	}
+
+	SetUnitPatchRenderLodFromSettings(UnitPatch, LODSettings);
+
+	TArray<FAnimToTextureAnimInfo> AnimDataForTexture;
+	UTexture2D* AnimDataTexture = nullptr;
+	int32 TotalMaterialUpdateCount = 0;
+
+	for (const FLODDataEd& LOD : LODSettings)
+	{
+		DataAsset->SkeletalLODIndex = LOD.LODIndex;
+		DataAsset->StaticLODIndex = LOD.LODIndex;
+		DataAsset->Mode = (LOD.Mode == EVATBakeMode::BoneMode) ? EAnimToTextureMode::Bone : EAnimToTextureMode::Vertex;
+
+		const FString LodSuffix = FString::Printf(TEXT("_LOD%d"), LOD.LODIndex);
+		if (LOD.Mode == EVATBakeMode::BoneMode)
+		{
+			DataAsset->BonePositionTexture = CreateOrLoadTexture2DAsset(GeneratedPackagePath, FString::Printf(TEXT("VAT_%s_BonePosition%s"), *AssetSlug, *LodSuffix), OutSavePaths);
+			DataAsset->BoneRotationTexture = CreateOrLoadTexture2DAsset(GeneratedPackagePath, FString::Printf(TEXT("VAT_%s_BoneRotation%s"), *AssetSlug, *LodSuffix), OutSavePaths);
+			DataAsset->BoneWeightTexture = CreateOrLoadTexture2DAsset(GeneratedPackagePath, FString::Printf(TEXT("VAT_%s_BoneWeights%s"), *AssetSlug, *LodSuffix), OutSavePaths);
+		}
+		else
+		{
+			DataAsset->VertexPositionTexture = CreateOrLoadTexture2DAsset(GeneratedPackagePath, FString::Printf(TEXT("VAT_%s_VertPosition%s"), *AssetSlug, *LodSuffix), OutSavePaths);
+			DataAsset->VertexNormalTexture = CreateOrLoadTexture2DAsset(GeneratedPackagePath, FString::Printf(TEXT("VAT_%s_VertNormal%s"), *AssetSlug, *LodSuffix), OutSavePaths);
+		}
+
+		const bool bBakeSuccess = UAnimToTextureBPLibrary::AnimationToTexture(DataAsset);
+		TSharedPtr<FJsonObject> LodResult = MakeShared<FJsonObject>();
+		LodResult->SetNumberField(TEXT("lod_index"), LOD.LODIndex);
+		LodResult->SetStringField(TEXT("mode"), LOD.Mode == EVATBakeMode::BoneMode ? TEXT("BoneMode") : TEXT("VertexMode"));
+		LodResult->SetBoolField(TEXT("bake_success"), bBakeSuccess);
+		if (!bBakeSuccess)
+		{
+			Root->SetBoolField(TEXT("success"), false);
+			Root->SetStringField(TEXT("error"), FString::Printf(TEXT("AnimationToTexture failed for LOD %d."), LOD.LODIndex));
+			LodResults.Add(MakeShared<FJsonValueObject>(LodResult));
+			Root->SetArrayField(TEXT("lod_results"), LodResults);
+			Root->SetArrayField(TEXT("warnings"), Warnings);
+			return Root;
+		}
+
+		if (!AnimDataTexture)
+		{
+			AnimDataForTexture = DataAsset->Animations;
+			AnimDataTexture = UMassBattleFuncLibEd::CreateAnimDataTexture(AnimDataForTexture, GeneratedPackagePath, TEXT("AnimDataTex_") + AssetSlug);
+			if (AnimDataTexture)
+			{
+				OutSavePaths.AddUnique(AnimDataTexture->GetPathName());
+			}
+		}
+
+		const int32 MaterialUpdateCount = UpdateVatMaterialsForLOD(StaticMesh, DataAsset, AnimDataTexture, LOD);
+		TotalMaterialUpdateCount += MaterialUpdateCount;
+		LodResult->SetNumberField(TEXT("material_update_count"), MaterialUpdateCount);
+		LodResults.Add(MakeShared<FJsonValueObject>(LodResult));
+	}
+
+	DataAsset->MarkPackageDirty();
+	StaticMesh->MarkPackageDirty();
+
+	const FString FoundAnimsJson = SerializeFoundAnimsLocal(FoundAnims);
+	const FString AnimsDataResult = UMassBattleEditorMCPApi::MCP_CreateAnimsDataFromSequences(DataAsset->GetPathName(), FoundAnimsJson);
+	TSharedPtr<FJsonObject> AnimsDataJson = ParseObject(AnimsDataResult);
+	if (!AnimsDataJson.IsValid() || !AnimsDataJson->GetBoolField(TEXT("success")))
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("VAT bake succeeded but CreateAnimsDataFromSequences failed."));
+		Root->SetStringField(TEXT("anims_data_result"), AnimsDataResult);
+		Root->SetArrayField(TEXT("lod_results"), LodResults);
+		Root->SetArrayField(TEXT("warnings"), Warnings);
+		return Root;
+	}
+
+	const TSharedPtr<FJsonObject>* AnimsData = nullptr;
+	if (AnimsDataJson->TryGetObjectField(TEXT("anims_data"), AnimsData) && AnimsData && AnimsData->IsValid())
+	{
+		TSharedPtr<FJsonObject> Data = GetOrCreateObjectField(UnitPatch, TEXT("Data"));
+		TSharedPtr<FJsonObject> AnimShared = GetOrCreateObjectField(Data, TEXT("AnimShared"));
+		AnimShared->SetObjectField(TEXT("AnimData"), ConvertAnimsDataForMerge(*AnimsData));
+	}
+
+	Root->SetStringField(TEXT("data_asset_path"), DataAsset->GetPathName());
+	Root->SetStringField(TEXT("anim_data_texture_path"), AnimDataTexture ? AnimDataTexture->GetPathName() : FString());
+	Root->SetNumberField(TEXT("sample_rate"), SampleRate);
+	Root->SetNumberField(TEXT("uv_channel"), UVChannel);
+	Root->SetNumberField(TEXT("animation_count"), BakeSequences.Num());
+	Root->SetNumberField(TEXT("static_lod_count"), StaticMeshLODCount);
+	Root->SetNumberField(TEXT("requested_lod_count"), RequestedLODSettings.Num());
+	Root->SetNumberField(TEXT("baked_lod_count"), LODSettings.Num());
+	Root->SetNumberField(TEXT("material_update_count"), TotalMaterialUpdateCount);
+	Root->SetArrayField(TEXT("lod_results"), LodResults);
+	Root->SetArrayField(TEXT("warnings"), Warnings);
+	Root->SetObjectField(TEXT("anims_data"), AnimsDataJson);
+	return Root;
+}
+
+static void ApplyGeneratedUnitRuntimeAnimationDefaults(const FString& UnitPath, int32 SampleRate)
+{
+	UMassBattleAgentConfigDataAsset* Unit = Cast<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(EnsureObjectPath(UnitPath)).TryLoad());
+	if (!Unit)
+	{
+		return;
+	}
+
+	Unit->Modify();
+	Unit->Animating.SampleRate = SampleRate;
+	Unit->MarkPackageDirty();
+}
+
 static FString ResolveStyleFamily(const TSharedPtr<FJsonObject>& Spec, const TSharedPtr<FJsonObject>& Organization, const FString& SearchText)
 {
 	FString Family;
@@ -806,6 +1482,69 @@ static void AddIssue(TArray<TSharedPtr<FJsonValue>>& Issues, const FString& Seve
 	Issues.Add(MakeShared<FJsonValueObject>(MakeIssue(Severity, Code, Message, Field)));
 }
 
+static bool TryMakeIssueKey(const TSharedPtr<FJsonValue>& IssueValue, FString& OutKey)
+{
+	if (!IssueValue.IsValid() || IssueValue->Type != EJson::Object)
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject> Issue = IssueValue->AsObject();
+	if (!Issue.IsValid())
+	{
+		return false;
+	}
+
+	FString Severity;
+	FString Code;
+	FString Field;
+	FString Message;
+	Issue->TryGetStringField(TEXT("severity"), Severity);
+	Issue->TryGetStringField(TEXT("code"), Code);
+	Issue->TryGetStringField(TEXT("field"), Field);
+	Issue->TryGetStringField(TEXT("message"), Message);
+	if (Severity.IsEmpty() && Code.IsEmpty() && Field.IsEmpty() && Message.IsEmpty())
+	{
+		return false;
+	}
+
+	OutKey = FString::Printf(TEXT("%s|%s|%s|%s"), *Severity, *Code, *Field, *Message);
+	return true;
+}
+
+static bool HasIssueWithKey(const TArray<TSharedPtr<FJsonValue>>& Issues, const FString& Key)
+{
+	for (const TSharedPtr<FJsonValue>& Existing : Issues)
+	{
+		FString ExistingKey;
+		if (TryMakeIssueKey(Existing, ExistingKey) && ExistingKey == Key)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static void AddIssueValueUnique(TArray<TSharedPtr<FJsonValue>>& Issues, const TSharedPtr<FJsonValue>& IssueValue)
+{
+	FString Key;
+	if (!TryMakeIssueKey(IssueValue, Key))
+	{
+		Issues.Add(IssueValue);
+		return;
+	}
+
+	if (!HasIssueWithKey(Issues, Key))
+	{
+		Issues.Add(IssueValue);
+	}
+}
+
+static void AddIssueUnique(TArray<TSharedPtr<FJsonValue>>& Issues, const FString& Severity, const FString& Code, const FString& Message, const FString& Field = FString())
+{
+	AddIssueValueUnique(Issues, MakeShared<FJsonValueObject>(MakeIssue(Severity, Code, Message, Field)));
+}
+
 static bool HasErrorIssue(const TArray<TSharedPtr<FJsonValue>>& Issues)
 {
 	for (const TSharedPtr<FJsonValue>& Value : Issues)
@@ -846,6 +1585,417 @@ static bool JsonObjectFieldBool(const TSharedPtr<FJsonObject>& Object, const FSt
 		Object->TryGetBoolField(FieldName, bValue);
 	}
 	return bValue;
+}
+
+static void CopyStringField(const TSharedPtr<FJsonObject>& Source, const TSharedPtr<FJsonObject>& Target, const FString& FieldName)
+{
+	if (!Source.IsValid() || !Target.IsValid())
+	{
+		return;
+	}
+
+	FString Value;
+	if (Source->TryGetStringField(FieldName, Value))
+	{
+		Target->SetStringField(FieldName, Value);
+	}
+}
+
+static void CopyBoolField(const TSharedPtr<FJsonObject>& Source, const TSharedPtr<FJsonObject>& Target, const FString& FieldName)
+{
+	if (!Source.IsValid() || !Target.IsValid())
+	{
+		return;
+	}
+
+	bool bValue = false;
+	if (Source->TryGetBoolField(FieldName, bValue))
+	{
+		Target->SetBoolField(FieldName, bValue);
+	}
+}
+
+static void CopyNumberField(const TSharedPtr<FJsonObject>& Source, const TSharedPtr<FJsonObject>& Target, const FString& FieldName)
+{
+	if (!Source.IsValid() || !Target.IsValid())
+	{
+		return;
+	}
+
+	double Value = 0.0;
+	if (Source->TryGetNumberField(FieldName, Value))
+	{
+		Target->SetNumberField(FieldName, Value);
+	}
+}
+
+static void CopyArrayField(const TSharedPtr<FJsonObject>& Source, const TSharedPtr<FJsonObject>& Target, const FString& FieldName)
+{
+	if (!Source.IsValid() || !Target.IsValid())
+	{
+		return;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Array = nullptr;
+	if (Source->TryGetArrayField(FieldName, Array) && Array)
+	{
+		Target->SetArrayField(FieldName, *Array);
+	}
+}
+
+static TSharedPtr<FJsonObject> MakeCompactCreateVatApplySummary(const TSharedPtr<FJsonObject>& ApplyJson)
+{
+	TSharedPtr<FJsonObject> Summary = MakeShared<FJsonObject>();
+	if (!ApplyJson.IsValid())
+	{
+		Summary->SetBoolField(TEXT("success"), false);
+		Summary->SetStringField(TEXT("error"), TEXT("Apply result was not valid JSON."));
+		return Summary;
+	}
+
+	CopyBoolField(ApplyJson, Summary, TEXT("success"));
+	CopyBoolField(ApplyJson, Summary, TEXT("dry_run"));
+	CopyBoolField(ApplyJson, Summary, TEXT("save_assets"));
+
+	const TSharedPtr<FJsonObject>* Plan = nullptr;
+	if (ApplyJson->TryGetObjectField(TEXT("plan"), Plan) && Plan && Plan->IsValid())
+	{
+		CopyArrayField(*Plan, Summary, TEXT("warnings"));
+
+		const TSharedPtr<FJsonObject>* Layout = nullptr;
+		if ((*Plan)->TryGetObjectField(TEXT("resolved_layout"), Layout) && Layout && Layout->IsValid())
+		{
+			TSharedPtr<FJsonObject> LayoutSummary = MakeShared<FJsonObject>();
+			const TArray<FString> LayoutFields = {
+				TEXT("unit_name"),
+				TEXT("target_package_path"),
+				TEXT("target_unit_package_path"),
+				TEXT("static_mesh_path"),
+				TEXT("unit_path"),
+				TEXT("renderer_class_path"),
+				TEXT("vat_data_asset_path")
+			};
+			for (const FString& FieldName : LayoutFields)
+			{
+				CopyStringField(*Layout, LayoutSummary, FieldName);
+			}
+			Summary->SetObjectField(TEXT("resolved_layout"), LayoutSummary);
+		}
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* ExecutionSteps = nullptr;
+	if (ApplyJson->TryGetArrayField(TEXT("execution_steps"), ExecutionSteps) && ExecutionSteps)
+	{
+		TSharedPtr<FJsonObject> StepStatuses = MakeShared<FJsonObject>();
+		TSharedPtr<FJsonObject> BakeSummary = MakeShared<FJsonObject>();
+		TSharedPtr<FJsonObject> UnitSummary = MakeShared<FJsonObject>();
+
+		for (const TSharedPtr<FJsonValue>& Value : *ExecutionSteps)
+		{
+			if (!Value.IsValid() || Value->Type != EJson::Object)
+			{
+				continue;
+			}
+
+			const TSharedPtr<FJsonObject> Step = Value->AsObject();
+			FString Id;
+			FString Status;
+			if (Step->TryGetStringField(TEXT("id"), Id) && Step->TryGetStringField(TEXT("status"), Status) && !Id.IsEmpty())
+			{
+				StepStatuses->SetStringField(Id, Status);
+			}
+
+			if (Id == TEXT("bake_vat_textures"))
+			{
+				const TSharedPtr<FJsonObject>* BakeResult = nullptr;
+				if (Step->TryGetObjectField(TEXT("result"), BakeResult) && BakeResult && BakeResult->IsValid())
+				{
+					CopyBoolField(*BakeResult, BakeSummary, TEXT("success"));
+					CopyNumberField(*BakeResult, BakeSummary, TEXT("sample_rate"));
+					CopyNumberField(*BakeResult, BakeSummary, TEXT("animation_count"));
+					CopyNumberField(*BakeResult, BakeSummary, TEXT("static_lod_count"));
+					CopyNumberField(*BakeResult, BakeSummary, TEXT("baked_lod_count"));
+					CopyNumberField(*BakeResult, BakeSummary, TEXT("material_update_count"));
+					CopyStringField(*BakeResult, BakeSummary, TEXT("data_asset_path"));
+					CopyStringField(*BakeResult, BakeSummary, TEXT("anim_data_texture_path"));
+				}
+			}
+			else if (Id == TEXT("create_unit") || Id == TEXT("merge_unit_data"))
+			{
+				const TSharedPtr<FJsonObject>* StepResult = nullptr;
+				if (Step->TryGetObjectField(TEXT("result"), StepResult) && StepResult && StepResult->IsValid())
+				{
+					CopyStringField(*StepResult, UnitSummary, TEXT("asset_path"));
+					CopyBoolField(*StepResult, UnitSummary, TEXT("saved"));
+					const TSharedPtr<FJsonObject>* ApplyResult = nullptr;
+					if ((*StepResult)->TryGetObjectField(TEXT("apply_result"), ApplyResult) && ApplyResult && ApplyResult->IsValid())
+					{
+						CopyStringField(*ApplyResult, UnitSummary, TEXT("asset_path"));
+						CopyBoolField(*ApplyResult, UnitSummary, TEXT("saved"));
+					}
+				}
+			}
+		}
+
+		Summary->SetObjectField(TEXT("step_statuses"), StepStatuses);
+		if (!BakeSummary->Values.IsEmpty())
+		{
+			Summary->SetObjectField(TEXT("vat_bake"), BakeSummary);
+		}
+		if (!UnitSummary->Values.IsEmpty())
+		{
+			Summary->SetObjectField(TEXT("unit"), UnitSummary);
+		}
+	}
+
+	return Summary;
+}
+
+static bool TryGetStringByNames(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames, FString& OutValue)
+{
+	if (!Object.IsValid())
+	{
+		return false;
+	}
+
+	for (const FString& FieldName : FieldNames)
+	{
+		if (Object->TryGetStringField(FieldName, OutValue) && !OutValue.IsEmpty())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static FString ResolvePathFromSpecOrDefault(
+	const TSharedPtr<FJsonObject>& Spec,
+	const TArray<FString>& SpecFieldNames,
+	const TSharedPtr<FJsonObject>& AuthoringDefaults,
+	const TArray<FString>& DefaultFieldNames,
+	const FString& BuiltinDefault,
+	const FString& WarningCode,
+	const FString& FieldName,
+	TArray<TSharedPtr<FJsonValue>>& Warnings)
+{
+	FString Path;
+	if (TryGetObjectPathSpec(Spec, SpecFieldNames, Path))
+	{
+		return Path;
+	}
+
+	if (TryGetStringByNames(AuthoringDefaults, DefaultFieldNames, Path) && !Path.IsEmpty())
+	{
+		AddIssue(Warnings, TEXT("warning"), WarningCode, FString::Printf(TEXT("%s was not supplied; using style default: %s"), *FieldName, *Path), FieldName);
+		return Path;
+	}
+
+	if (!BuiltinDefault.IsEmpty())
+	{
+		AddIssue(Warnings, TEXT("warning"), WarningCode, FString::Printf(TEXT("%s was not supplied; using built-in MassBattle default: %s"), *FieldName, *BuiltinDefault), FieldName);
+		return BuiltinDefault;
+	}
+
+	return FString();
+}
+
+static bool ResolveDefaultTemplateUnitForFamily(
+	const TSharedPtr<FJsonObject>& AuthoringDefaults,
+	const FString& StyleFamily,
+	FString& OutTemplateUnitPath,
+	FString& OutSource)
+{
+	OutTemplateUnitPath.Reset();
+	OutSource.Reset();
+	if (!AuthoringDefaults.IsValid())
+	{
+		return false;
+	}
+
+	const TSharedPtr<FJsonObject>* FamilyTemplates = nullptr;
+	if (AuthoringDefaults->TryGetObjectField(TEXT("default_unit_templates"), FamilyTemplates) && FamilyTemplates && FamilyTemplates->IsValid())
+	{
+		TArray<FString> CandidateKeys;
+		if (!StyleFamily.IsEmpty())
+		{
+			CandidateKeys.Add(StyleFamily);
+			CandidateKeys.Add(StyleFamily.ToLower());
+		}
+		CandidateKeys.Add(TEXT("default"));
+
+		for (const FString& Key : CandidateKeys)
+		{
+			if ((*FamilyTemplates)->TryGetStringField(Key, OutTemplateUnitPath) && !OutTemplateUnitPath.IsEmpty())
+			{
+				OutSource = TEXT("authoring_defaults.default_unit_templates.") + Key;
+				return true;
+			}
+		}
+	}
+
+	if (AuthoringDefaults->TryGetStringField(TEXT("default_unit_template"), OutTemplateUnitPath) && !OutTemplateUnitPath.IsEmpty())
+	{
+		OutSource = TEXT("authoring_defaults.default_unit_template");
+		return true;
+	}
+
+	return false;
+}
+
+static bool ContainsAnyKeyword(const FString& Text, const TArray<FString>& Keywords)
+{
+	for (const FString& Keyword : Keywords)
+	{
+		if (Text.Contains(Keyword, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static void AddAnimToFallbackCategory(FFoundAnimSequences& FoundAnims, UAnimSequence* AnimSequence)
+{
+	if (!AnimSequence)
+	{
+		return;
+	}
+
+	const FString Name = AnimSequence->GetName();
+	const int32 MaxPerCategory = 5;
+	auto AddToCategory = [AnimSequence, MaxPerCategory](TArray<TObjectPtr<UAnimSequence>>& TargetArray)
+	{
+		if (TargetArray.Num() < MaxPerCategory)
+		{
+			TargetArray.AddUnique(AnimSequence);
+		}
+	};
+
+	if (ContainsAnyKeyword(Name, { TEXT("Idle"), TEXT("Idling"), TEXT("Wave"), TEXT("Waving"), TEXT("Loop") }))
+	{
+		AddToCategory(FoundAnims.Idle);
+	}
+	else if (ContainsAnyKeyword(Name, { TEXT("Move"), TEXT("Walk"), TEXT("Run"), TEXT("Crawl"), TEXT("Fly"), TEXT("Swim"), TEXT("Dash"), TEXT("Sprint") }))
+	{
+		AddToCategory(FoundAnims.Move);
+	}
+	else if (ContainsAnyKeyword(Name, { TEXT("Fall"), TEXT("Falling"), TEXT("Jump"), TEXT("Land") }))
+	{
+		AddToCategory(FoundAnims.Fall);
+	}
+	else if (ContainsAnyKeyword(Name, { TEXT("Appear"), TEXT("Birth"), TEXT("Spawn"), TEXT("Born"), TEXT("Wake"), TEXT("Rise"), TEXT("Raise"), TEXT("Raised"), TEXT("Up") }))
+	{
+		AddToCategory(FoundAnims.Appear);
+	}
+	else if (ContainsAnyKeyword(Name, { TEXT("Attack"), TEXT("Fire"), TEXT("Firing"), TEXT("Shoot"), TEXT("Cast"), TEXT("Strike"), TEXT("Bash"), TEXT("Slash"), TEXT("Punch"), TEXT("Kick") }))
+	{
+		AddToCategory(FoundAnims.Attack);
+	}
+	else if (ContainsAnyKeyword(Name, { TEXT("Hit"), TEXT("BeingHit"), TEXT("Reaction"), TEXT("Damage"), TEXT("Hurt"), TEXT("Shake") }))
+	{
+		AddToCategory(FoundAnims.Hit);
+	}
+	else if (ContainsAnyKeyword(Name, { TEXT("Death"), TEXT("Die"), TEXT("Dying"), TEXT("Dead"), TEXT("Kill"), TEXT("Lower"), TEXT("Down"), TEXT("Capture"), TEXT("Captured") }))
+	{
+		AddToCategory(FoundAnims.Death);
+	}
+	else
+	{
+		AddToCategory(FoundAnims.Other);
+	}
+}
+
+static IAssetRegistry& GetAssetRegistry();
+
+static bool TryFillAnimDiscoveryWithCompatibleFallback(
+	const FString& SkeletalMeshPath,
+	const FString& SearchPath,
+	const FString& FileName,
+	TSharedPtr<FJsonObject> AnimJson,
+	TArray<TSharedPtr<FJsonValue>>& Warnings)
+{
+	USkeletalMesh* Mesh = Cast<USkeletalMesh>(FSoftObjectPath(EnsureObjectPath(SkeletalMeshPath)).TryLoad());
+	if (!Mesh || !Mesh->GetSkeleton() || SearchPath.IsEmpty() || !AnimJson.IsValid())
+	{
+		return false;
+	}
+
+	auto CollectCompatibleAnimations = [Mesh, &SearchPath](const FString& NameFilter, TArray<UAnimSequence*>& OutSequences)
+	{
+		const FString SafeSearchPath = SearchPath;
+		TArray<FString> PathsToScan;
+		PathsToScan.Add(SafeSearchPath);
+		GetAssetRegistry().ScanPathsSynchronous(PathsToScan, true);
+
+		FARFilter Filter;
+		Filter.ClassPaths.Add(UAnimSequence::StaticClass()->GetClassPathName());
+		Filter.PackagePaths.Add(*SafeSearchPath);
+		Filter.bRecursivePaths = true;
+
+		TArray<FAssetData> Assets;
+		GetAssetRegistry().GetAssets(Filter, Assets);
+		Assets.Sort([](const FAssetData& A, const FAssetData& B)
+		{
+			return A.GetSoftObjectPath().ToString() < B.GetSoftObjectPath().ToString();
+		});
+
+		for (const FAssetData& Asset : Assets)
+		{
+			const FString AssetName = Asset.AssetName.ToString();
+			if (!NameFilter.IsEmpty() && !AssetName.Contains(NameFilter, ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+
+			UAnimSequence* AnimSequence = Cast<UAnimSequence>(Asset.GetAsset());
+			if (AnimSequence && AnimSequence->GetSkeleton() == Mesh->GetSkeleton())
+			{
+				OutSequences.AddUnique(AnimSequence);
+			}
+		}
+	};
+
+	TArray<UAnimSequence*> CompatibleAnimations;
+	CollectCompatibleAnimations(FileName, CompatibleAnimations);
+	bool bIgnoredNameFilter = false;
+	if (CompatibleAnimations.IsEmpty() && !FileName.IsEmpty())
+	{
+		CollectCompatibleAnimations(FString(), CompatibleAnimations);
+		bIgnoredNameFilter = !CompatibleAnimations.IsEmpty();
+	}
+
+	if (CompatibleAnimations.IsEmpty())
+	{
+		return false;
+	}
+
+	FFoundAnimSequences FallbackAnims;
+	for (UAnimSequence* AnimSequence : CompatibleAnimations)
+	{
+		AddAnimToFallbackCategory(FallbackAnims, AnimSequence);
+	}
+
+	if (FallbackAnims.Idle.IsEmpty())
+	{
+		FallbackAnims.Idle.AddUnique(CompatibleAnimations[0]);
+	}
+
+	TSharedPtr<FJsonObject> FallbackAnimsObject = ParseObject(SerializeFoundAnimsLocal(FallbackAnims));
+	if (!FallbackAnimsObject.IsValid())
+	{
+		return false;
+	}
+
+	AnimJson->SetObjectField(TEXT("anims"), FallbackAnimsObject);
+	AnimJson->SetBoolField(TEXT("fallback_used"), true);
+	AnimJson->SetNumberField(TEXT("fallback_candidate_count"), CompatibleAnimations.Num());
+	AnimJson->SetBoolField(TEXT("fallback_ignored_name_filter"), bIgnoredNameFilter);
+
+	const FString FilterNote = bIgnoredNameFilter
+		? FString::Printf(TEXT(" The supplied animation_name_filter '%s' matched nothing and was ignored for fallback."), *FileName)
+		: FString();
+	AddIssue(Warnings, TEXT("warning"), TEXT("animation_discovery_fallback_used"), FString::Printf(TEXT("FindAndFillAnimSequences produced no categorized animations; MCP used %d same-skeleton AnimSequence asset(s) as a fallback.%s Provide an explicit animations map for exact state mapping."), CompatibleAnimations.Num(), *FilterNote), TEXT("animations"));
+	return true;
 }
 
 struct FOrganizeAssetRef
@@ -976,6 +2126,305 @@ static int32 CountJsonObjectArrayItems(const TSharedPtr<FJsonObject>& Object)
 	return Count;
 }
 
+static bool HasAnyObjectPathField(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames)
+{
+	FString Unused;
+	return TryGetObjectPathSpec(Object, FieldNames, Unused);
+}
+
+static bool HasAnyField(const TSharedPtr<FJsonObject>& Object, const TArray<FString>& FieldNames)
+{
+	if (!Object.IsValid())
+	{
+		return false;
+	}
+
+	for (const FString& FieldName : FieldNames)
+	{
+		if (Object->HasField(FieldName))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static FString GeneratedClassPathFromSelectedObject(UObject* Object)
+{
+	if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
+	{
+		return Blueprint->GeneratedClass ? Blueprint->GeneratedClass->GetPathName() : FString();
+	}
+	if (UClass* Class = Cast<UClass>(Object))
+	{
+		return Class->GetPathName();
+	}
+	return FString();
+}
+
+static void AddSelectedAssetSummary(TArray<TSharedPtr<FJsonValue>>& SelectedAssets, UObject* Object, const FString& Role)
+{
+	if (!Object)
+	{
+		return;
+	}
+
+	TSharedPtr<FJsonObject> Item = MakeShared<FJsonObject>();
+	Item->SetStringField(TEXT("path"), Object->GetPathName());
+	Item->SetStringField(TEXT("class"), Object->GetClass() ? Object->GetClass()->GetName() : FString());
+	Item->SetStringField(TEXT("name"), Object->GetName());
+	if (!Role.IsEmpty())
+	{
+		Item->SetStringField(TEXT("role"), Role);
+	}
+	SelectedAssets.Add(MakeShared<FJsonValueObject>(Item));
+}
+
+static void CollectExplicitSelectedAssetObjects(const TSharedPtr<FJsonObject>& Options, TArray<UObject*>& OutObjects, TArray<TSharedPtr<FJsonValue>>& SelectionIssues)
+{
+	const TArray<TSharedPtr<FJsonValue>>* SelectedAssets = nullptr;
+	if (!Options.IsValid() || !Options->TryGetArrayField(TEXT("selected_assets"), SelectedAssets) || !SelectedAssets)
+	{
+		return;
+	}
+
+	for (const TSharedPtr<FJsonValue>& Value : *SelectedAssets)
+	{
+		FString Path;
+		if (Value.IsValid() && Value->Type == EJson::String)
+		{
+			Path = Value->AsString();
+		}
+		else if (Value.IsValid() && Value->Type == EJson::Object)
+		{
+			TSharedPtr<FJsonObject> Item = Value->AsObject();
+			Item->TryGetStringField(TEXT("path"), Path);
+			Item->TryGetStringField(TEXT("asset_path"), Path);
+			Item->TryGetStringField(TEXT("object_path"), Path);
+		}
+
+		if (Path.IsEmpty())
+		{
+			AddIssue(SelectionIssues, TEXT("warning"), TEXT("selected_asset_path_missing"), TEXT("A selected_assets entry did not contain a loadable path."), TEXT("selected_assets"));
+			continue;
+		}
+
+		UObject* Object = FSoftObjectPath(EnsureObjectPath(Path)).TryLoad();
+		if (!Object)
+		{
+			AddIssue(SelectionIssues, TEXT("warning"), TEXT("selected_asset_not_loaded"), FString::Printf(TEXT("Selected asset could not be loaded: %s"), *Path), TEXT("selected_assets"));
+			continue;
+		}
+		OutObjects.AddUnique(Object);
+	}
+}
+
+static void CollectCurrentEditorSelectionObjects(TArray<UObject*>& OutObjects)
+{
+	if (!GEditor)
+	{
+		return;
+	}
+
+	USelection* Selection = GEditor->GetSelectedObjects();
+	if (!Selection)
+	{
+		return;
+	}
+
+	for (FSelectionIterator It(*Selection); It; ++It)
+	{
+		if (UObject* Object = Cast<UObject>(*It))
+		{
+			OutObjects.AddUnique(Object);
+		}
+	}
+}
+
+static TSharedPtr<FJsonObject> BuildCreateVatUnitSpecFromSelection(const TSharedPtr<FJsonObject>& Options)
+{
+	TSharedPtr<FJsonObject> Spec = MakeShared<FJsonObject>();
+	if (Options.IsValid())
+	{
+		MergeJsonObjects(Spec, Options);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Warnings;
+	TArray<TSharedPtr<FJsonValue>> SelectedAssets;
+	TArray<UObject*> SelectionObjects;
+	CollectExplicitSelectedAssetObjects(Options, SelectionObjects, Warnings);
+	CollectCurrentEditorSelectionObjects(SelectionObjects);
+
+	USkeletalMesh* SelectedSkeletalMesh = nullptr;
+	UMassBattleAgentConfigDataAsset* SelectedUnit = nullptr;
+	UAnimToTextureDataAsset* SelectedVatData = nullptr;
+	UNiagaraSystem* SelectedNiagara = nullptr;
+	FString SelectedRendererClassPath;
+	TArray<UMaterialInterface*> SelectedMaterials;
+	FFoundAnimSequences SelectedAnims;
+
+	for (UObject* Object : SelectionObjects)
+	{
+		if (!Object)
+		{
+			continue;
+		}
+
+		if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(Object))
+		{
+			if (!SelectedSkeletalMesh)
+			{
+				SelectedSkeletalMesh = SkeletalMesh;
+			}
+			AddSelectedAssetSummary(SelectedAssets, Object, TEXT("skeletal_mesh"));
+			continue;
+		}
+
+		if (UMassBattleAgentConfigDataAsset* Unit = Cast<UMassBattleAgentConfigDataAsset>(Object))
+		{
+			if (!SelectedUnit)
+			{
+				SelectedUnit = Unit;
+			}
+			AddSelectedAssetSummary(SelectedAssets, Object, TEXT("unit"));
+			continue;
+		}
+
+		if (UAnimSequence* AnimSequence = Cast<UAnimSequence>(Object))
+		{
+			AddAnimToFallbackCategory(SelectedAnims, AnimSequence);
+			AddSelectedAssetSummary(SelectedAssets, Object, TEXT("animation"));
+			continue;
+		}
+
+		if (UAnimToTextureDataAsset* VatData = Cast<UAnimToTextureDataAsset>(Object))
+		{
+			if (!SelectedVatData)
+			{
+				SelectedVatData = VatData;
+			}
+			AddSelectedAssetSummary(SelectedAssets, Object, TEXT("vat_data_asset"));
+			continue;
+		}
+
+		if (UNiagaraSystem* Niagara = Cast<UNiagaraSystem>(Object))
+		{
+			if (!SelectedNiagara)
+			{
+				SelectedNiagara = Niagara;
+			}
+			AddSelectedAssetSummary(SelectedAssets, Object, TEXT("niagara_system"));
+			continue;
+		}
+
+		if (UMaterialInterface* Material = Cast<UMaterialInterface>(Object))
+		{
+			SelectedMaterials.AddUnique(Material);
+			AddSelectedAssetSummary(SelectedAssets, Object, TEXT("material"));
+			continue;
+		}
+
+		const FString GeneratedClassPath = GeneratedClassPathFromSelectedObject(Object);
+		if (!GeneratedClassPath.IsEmpty())
+		{
+			if (SelectedRendererClassPath.IsEmpty() && Object->GetName().Contains(TEXT("Renderer"), ESearchCase::IgnoreCase))
+			{
+				SelectedRendererClassPath = EnsureGeneratedClassPath(GeneratedClassPath);
+			}
+			AddSelectedAssetSummary(SelectedAssets, Object, TEXT("class_or_blueprint"));
+			continue;
+		}
+
+		AddSelectedAssetSummary(SelectedAssets, Object, TEXT("ignored"));
+	}
+
+	if (SelectionObjects.IsEmpty())
+	{
+		AddIssue(Warnings, TEXT("warning"), TEXT("no_current_selection"), TEXT("No current editor selection or selected_assets were available; the generated spec will rely only on explicit options."), TEXT("selected_assets"));
+	}
+
+	if (SelectedSkeletalMesh && !HasAnyObjectPathField(Spec, { TEXT("skeletal_mesh"), TEXT("mesh"), TEXT("source_mesh") }))
+	{
+		Spec->SetStringField(TEXT("skeletal_mesh"), SelectedSkeletalMesh->GetPathName());
+		AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_skeletal_mesh_from_selection"), FString::Printf(TEXT("skeletal_mesh was inferred from selection: %s"), *SelectedSkeletalMesh->GetPathName()), TEXT("skeletal_mesh"));
+	}
+
+	if (SelectedUnit && !HasAnyObjectPathField(Spec, { TEXT("target_unit"), TEXT("unit_path"), TEXT("existing_unit"), TEXT("template_unit"), TEXT("source_unit") }))
+	{
+		const FString SelectedUnitRole = StringFieldOrDefault(Options, TEXT("selected_unit_role"), TEXT("target")).ToLower();
+		if (SelectedUnitRole == TEXT("template") || BoolFieldByNamesOrDefault(Options, { TEXT("use_selected_unit_as_template") }, false))
+		{
+			Spec->SetStringField(TEXT("template_unit"), SelectedUnit->GetPathName());
+			AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_template_unit_from_selection"), FString::Printf(TEXT("template_unit was inferred from selected unit: %s"), *SelectedUnit->GetPathName()), TEXT("template_unit"));
+		}
+		else if (SelectedUnitRole != TEXT("ignore"))
+		{
+			Spec->SetStringField(TEXT("target_unit"), SelectedUnit->GetPathName());
+			AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_target_unit_from_selection"), FString::Printf(TEXT("target_unit was inferred from selected unit: %s"), *SelectedUnit->GetPathName()), TEXT("target_unit"));
+		}
+	}
+
+	if (SelectedVatData && !HasAnyObjectPathField(Spec, { TEXT("data_asset"), TEXT("anim_to_texture_data_asset"), TEXT("vat_data_asset") }))
+	{
+		Spec->SetStringField(TEXT("data_asset"), SelectedVatData->GetPathName());
+		AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_vat_data_asset_from_selection"), FString::Printf(TEXT("data_asset was inferred from selection: %s"), *SelectedVatData->GetPathName()), TEXT("data_asset"));
+	}
+
+	if (SelectedNiagara && !HasAnyObjectPathField(Spec, { TEXT("niagara_system"), TEXT("niagara"), TEXT("niagara_system_asset") }))
+	{
+		Spec->SetStringField(TEXT("niagara_system"), SelectedNiagara->GetPathName());
+		AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_niagara_system_from_selection"), FString::Printf(TEXT("niagara_system was inferred from selection: %s"), *SelectedNiagara->GetPathName()), TEXT("niagara_system"));
+	}
+
+	if (!SelectedRendererClassPath.IsEmpty() && !HasAnyObjectPathField(Spec, { TEXT("source_renderer_class"), TEXT("renderer_template_class"), TEXT("template_renderer_class") }))
+	{
+		Spec->SetStringField(TEXT("source_renderer_class"), SelectedRendererClassPath);
+		AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_source_renderer_class_from_selection"), FString::Printf(TEXT("source_renderer_class was inferred from selection: %s"), *SelectedRendererClassPath), TEXT("source_renderer_class"));
+	}
+
+	if (!SelectedMaterials.IsEmpty() && !HasAnyField(Spec, { TEXT("material_overrides") }))
+	{
+		TArray<TSharedPtr<FJsonValue>> MaterialOverrides;
+		for (UMaterialInterface* Material : SelectedMaterials)
+		{
+			if (!Material)
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Override = MakeShared<FJsonObject>();
+			Override->SetStringField(TEXT("material"), Material->GetPathName());
+			MaterialOverrides.Add(MakeShared<FJsonValueObject>(Override));
+		}
+		if (!MaterialOverrides.IsEmpty())
+		{
+			Spec->SetArrayField(TEXT("material_overrides"), MaterialOverrides);
+			AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_material_overrides_from_selection"), FString::Printf(TEXT("%d material override(s) were inferred from selection."), MaterialOverrides.Num()), TEXT("material_overrides"));
+		}
+	}
+
+	if (FoundAnimsHasEntries(SelectedAnims) && !HasAnyField(Spec, { TEXT("animations"), TEXT("found_anims"), TEXT("found_animations"), TEXT("anim_sequences") }))
+	{
+		TSharedPtr<FJsonObject> AnimsObject = ParseObject(SerializeFoundAnimsLocal(SelectedAnims));
+		if (AnimsObject.IsValid())
+		{
+			Spec->SetObjectField(TEXT("animations"), AnimsObject);
+			AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_animations_from_selection"), TEXT("animations were inferred from selected AnimSequence assets. Review state mapping before final art lock."), TEXT("animations"));
+		}
+	}
+
+	if (!HasAnyField(Spec, { TEXT("vat_sample_rate"), TEXT("sample_rate"), TEXT("VATSampleRate") }))
+	{
+		Spec->SetNumberField(TEXT("vat_sample_rate"), 24.0);
+		AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_vat_sample_rate"), TEXT("vat_sample_rate was not supplied; using 24 Hz sampling. Runtime rendering can interpolate if supported."), TEXT("vat_sample_rate"));
+	}
+
+	TSharedPtr<FJsonObject> Root = MakeSuccess();
+	Root->SetObjectField(TEXT("spec"), Spec);
+	Root->SetArrayField(TEXT("selected_assets"), SelectedAssets);
+	Root->SetArrayField(TEXT("warnings"), Warnings);
+	return Root;
+}
+
 static TArray<FString> CollectAnimationSearchRoots(const TSharedPtr<FJsonObject>& Spec, const TSharedPtr<FJsonObject>& Style, const FString& SkeletalMeshPath)
 {
 	TArray<FString> Roots;
@@ -997,6 +2446,80 @@ static TArray<FString> CollectAnimationSearchRoots(const TSharedPtr<FJsonObject>
 		AddUniqueRoot(Roots, TEXT("/Game"));
 	}
 	return Roots;
+}
+
+static void AppendWarningsFromObject(TArray<TSharedPtr<FJsonValue>>& TargetWarnings, const TSharedPtr<FJsonObject>& Object, const FString& ArrayFieldName)
+{
+	const TArray<TSharedPtr<FJsonValue>>* SourceWarnings = nullptr;
+	if (Object.IsValid() && Object->TryGetArrayField(ArrayFieldName, SourceWarnings) && SourceWarnings)
+	{
+		for (const TSharedPtr<FJsonValue>& Warning : *SourceWarnings)
+		{
+			AddIssueValueUnique(TargetWarnings, Warning);
+		}
+	}
+}
+
+static TSharedPtr<FJsonObject> BuildResolvedCreateVatUnitSpecFromSelection(const TSharedPtr<FJsonObject>& Options)
+{
+	TSharedPtr<FJsonObject> Selection = BuildCreateVatUnitSpecFromSelection(Options);
+	if (!Selection.IsValid())
+	{
+		return nullptr;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Warnings;
+	AppendWarningsFromObject(Warnings, Selection, TEXT("warnings"));
+
+	const TSharedPtr<FJsonObject>* SpecPtr = nullptr;
+	TSharedPtr<FJsonObject> Spec = MakeShared<FJsonObject>();
+	if (Selection->TryGetObjectField(TEXT("spec"), SpecPtr) && SpecPtr && SpecPtr->IsValid())
+	{
+		Spec = *SpecPtr;
+	}
+
+	if (!HasAnyField(Spec, { TEXT("animations"), TEXT("found_anims"), TEXT("found_animations"), TEXT("anim_sequences") }))
+	{
+		FString SkeletalMeshPath;
+		if (TryGetObjectPathSpec(Spec, { TEXT("skeletal_mesh"), TEXT("mesh"), TEXT("source_mesh") }, SkeletalMeshPath) && !SkeletalMeshPath.IsEmpty())
+		{
+			const FString DiscoverResult = UMassBattleUnitEditorMCPApi::MCP_EditorDiscoverCompatibleAnimations(SkeletalMeshPath, ToJsonString(Spec));
+			TSharedPtr<FJsonObject> DiscoverJson = ParseObject(DiscoverResult);
+			if (DiscoverJson.IsValid())
+			{
+				Selection->SetObjectField(TEXT("discover_animations_result"), DiscoverJson);
+				AppendWarningsFromObject(Warnings, DiscoverJson, TEXT("warnings"));
+				bool bReady = false;
+				DiscoverJson->TryGetBoolField(TEXT("ready"), bReady);
+				const TSharedPtr<FJsonObject>* FoundAnims = nullptr;
+				if (bReady && DiscoverJson->TryGetObjectField(TEXT("found_anims"), FoundAnims) && FoundAnims && FoundAnims->IsValid())
+				{
+					Spec->SetObjectField(TEXT("animations"), *FoundAnims);
+					FString SelectedSearchPath;
+					if (!HasAnyObjectPathField(Spec, { TEXT("animation_search_path"), TEXT("animation_search_root"), TEXT("source_search_path"), TEXT("search_path") })
+						&& DiscoverJson->TryGetStringField(TEXT("selected_search_path"), SelectedSearchPath)
+						&& !SelectedSearchPath.IsEmpty())
+					{
+						Spec->SetStringField(TEXT("animation_search_path"), SelectedSearchPath);
+					}
+					AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_animations_from_search_roots"), TEXT("animations were inferred from style/search roots. Review the returned mapping if exact state semantics matter."), TEXT("animations"));
+				}
+				else
+				{
+					AddIssue(Warnings, TEXT("warning"), TEXT("no_animation_mapping_from_selection_or_roots"), TEXT("No selected or discoverable compatible animations were mapped. The create workflow may use static fallback unless animations are supplied."), TEXT("animations"));
+				}
+			}
+			else
+			{
+				Selection->SetStringField(TEXT("discover_animations_error"), DiscoverResult);
+				AddIssue(Warnings, TEXT("warning"), TEXT("animation_discovery_invalid_result"), TEXT("Animation discovery returned invalid JSON; continuing with the selected/default spec."), TEXT("animations"));
+			}
+		}
+	}
+
+	Selection->SetObjectField(TEXT("spec"), Spec);
+	Selection->SetArrayField(TEXT("warnings"), Warnings);
+	return Selection;
 }
 
 static bool PackageIsInRoots(const FString& PackageName, const TArray<FString>& Roots)
@@ -1782,7 +3305,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanPreparePurchasedAsset(const F
 
 	FString SourcePackagePath = MassBattleUnitEditorMCP::PackagePathFromObjectPath(SkeletalMeshPath);
 	FString AssetSlug;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("asset_slug"), TEXT("unit_slug"), TEXT("file_name") }, AssetSlug);
+	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("unit_name") }, AssetSlug);
 	if (AssetSlug.IsEmpty())
 	{
 		AssetSlug = MassBattleUnitEditorMCP::AssetNameFromObjectPath(SkeletalMeshPath);
@@ -1821,9 +3344,9 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanPreparePurchasedAsset(const F
 		OutputRoot = OutputRoot / FamilyFolder;
 	}
 
-	FString SourceFolderName = MassBattleUnitEditorMCP::StringFieldOrDefault(AuthoringDefaults, TEXT("source_folder_name"), TEXT("Source_{asset_slug}"));
+	FString SourceFolderName = MassBattleUnitEditorMCP::StringFieldOrDefault(AuthoringDefaults, TEXT("source_folder_name"), TEXT("Source_{unit_name}"));
 	Spec->TryGetStringField(TEXT("source_folder_name"), SourceFolderName);
-	SourceFolderName.ReplaceInline(TEXT("{asset_slug}"), *AssetSlug);
+	SourceFolderName.ReplaceInline(TEXT("{unit_name}"), *AssetSlug);
 	FString TargetSourcePackagePath = OutputRoot / SourceFolderName;
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("target_source_package_path"), TEXT("prepared_package_path") }, TargetSourcePackagePath);
 
@@ -1910,7 +3433,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanPreparePurchasedAsset(const F
 	Layout->SetStringField(TEXT("style_profile"), StyleId);
 	Layout->SetStringField(TEXT("recipe_id"), RecipeId);
 	Layout->SetStringField(TEXT("style_family"), StyleFamily);
-	Layout->SetStringField(TEXT("asset_slug"), AssetSlug);
+	Layout->SetStringField(TEXT("unit_name"), AssetSlug);
 	Layout->SetStringField(TEXT("source_package_path"), SourcePackagePath);
 	Layout->SetStringField(TEXT("texture_search_path"), TextureSearchPath);
 	Layout->SetStringField(TEXT("texture_name_filter"), TextureNameFilter);
@@ -2110,6 +3633,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorDiscoverCompatibleAnimations(cons
 	const TArray<FString> SearchRoots = MassBattleUnitEditorMCP::CollectAnimationSearchRoots(Options, Style, SkeletalMeshPath);
 	TArray<TSharedPtr<FJsonValue>> CandidateRoots;
 	TArray<TSharedPtr<FJsonValue>> SearchResults;
+	TArray<TSharedPtr<FJsonValue>> Warnings;
 
 	TSharedPtr<FJsonObject> SelectedAnims;
 	TSharedPtr<FJsonObject> SelectedResult;
@@ -2146,6 +3670,15 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorDiscoverCompatibleAnimations(cons
 		if (FindJson.IsValid() && FindJson->TryGetObjectField(TEXT("anims"), FoundAnims) && FoundAnims && FoundAnims->IsValid())
 		{
 			AnimationCount = MassBattleUnitEditorMCP::CountJsonObjectArrayItems(*FoundAnims);
+		}
+		if (bFindSuccess && AnimationCount == 0 && FindJson.IsValid())
+		{
+			MassBattleUnitEditorMCP::TryFillAnimDiscoveryWithCompatibleFallback(SkeletalMeshPath, SearchRoot, FileName, FindJson, Warnings);
+			FoundAnims = nullptr;
+			if (FindJson->TryGetObjectField(TEXT("anims"), FoundAnims) && FoundAnims && FoundAnims->IsValid())
+			{
+				AnimationCount = MassBattleUnitEditorMCP::CountJsonObjectArrayItems(*FoundAnims);
+			}
 		}
 		TotalAnimationCount += AnimationCount;
 
@@ -2189,6 +3722,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorDiscoverCompatibleAnimations(cons
 		}
 	}
 
+	if (!SelectedAnims.IsValid())
+	{
+		MassBattleUnitEditorMCP::AddIssueUnique(Warnings, TEXT("warning"), TEXT("no_compatible_animation_sequences_found"), FString::Printf(TEXT("No compatible AnimSequence assets were found in %d checked animation search root(s). The unit can still be created, but VAT animation needs explicit animations later."), CheckedRootCount), TEXT("animations"));
+	}
+
 	TSharedPtr<FJsonObject> Root = MassBattleUnitEditorMCP::MakeSuccess();
 	Root->SetStringField(TEXT("skeletal_mesh"), SkeletalMeshPath);
 	Root->SetStringField(TEXT("style_profile"), StyleId);
@@ -2201,6 +3739,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorDiscoverCompatibleAnimations(cons
 	Root->SetNumberField(TEXT("candidate_root_count"), SearchRoots.Num());
 	Root->SetArrayField(TEXT("candidate_roots"), CandidateRoots);
 	Root->SetArrayField(TEXT("results"), SearchResults);
+	Root->SetArrayField(TEXT("warnings"), Warnings);
 	Root->SetObjectField(TEXT("found_anims"), SelectedAnims.IsValid() ? SelectedAnims : MassBattleUnitEditorMCP::MakeEmptyFoundAnimsObject());
 	if (SelectedResult.IsValid())
 	{
@@ -2400,6 +3939,100 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyAddAnimationsToUnit(const FS
 	return UMassBattleUnitMCPApi::MCP_UnitApplyPlan(PlanId, bSaveAssets);
 }
 
+FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromSelection(const FString& OptionsJson)
+{
+	TSharedPtr<FJsonObject> Options = MassBattleUnitEditorMCP::ParseObject(OptionsJson);
+	if (!Options.IsValid())
+	{
+		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("OptionsJson is not valid JSON"));
+	}
+
+	TSharedPtr<FJsonObject> Selection = MassBattleUnitEditorMCP::BuildResolvedCreateVatUnitSpecFromSelection(Options);
+	if (!Selection.IsValid())
+	{
+		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("Failed to build create VAT unit spec from selection."));
+	}
+
+	const TSharedPtr<FJsonObject>* SpecPtr = nullptr;
+	if (!Selection->TryGetObjectField(TEXT("spec"), SpecPtr) || !SpecPtr || !SpecPtr->IsValid())
+	{
+		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("Selection resolver did not produce a spec."));
+	}
+
+	const FString PlanResult = MCP_EditorPlanCreateVatUnit(MassBattleUnitEditorMCP::ToJsonString(*SpecPtr));
+	TSharedPtr<FJsonObject> PlanJson = MassBattleUnitEditorMCP::ParseObject(PlanResult);
+
+	TSharedPtr<FJsonObject> Root = MassBattleUnitEditorMCP::MakeSuccess();
+	Root->SetStringField(TEXT("editor_workflow"), TEXT("MassBattleEditor selection -> VAT skeletal unit authoring plan"));
+	Root->SetObjectField(TEXT("selection"), Selection);
+	Root->SetObjectField(TEXT("resolved_spec"), *SpecPtr);
+	if (PlanJson.IsValid())
+	{
+		Root->SetObjectField(TEXT("create_plan"), PlanJson);
+		Root->SetBoolField(TEXT("ready_to_apply"), MassBattleUnitEditorMCP::JsonObjectFieldBool(PlanJson, TEXT("applicable"), false));
+	}
+	else
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("MCP_EditorPlanCreateVatUnit returned invalid JSON."));
+		Root->SetStringField(TEXT("create_plan_raw"), PlanResult);
+	}
+	return MassBattleUnitEditorMCP::ToJsonString(Root);
+}
+
+FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnitFromSelection(const FString& OptionsJson, bool bSaveAssets)
+{
+	TSharedPtr<FJsonObject> Options = MassBattleUnitEditorMCP::ParseObject(OptionsJson);
+	if (!Options.IsValid())
+	{
+		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("OptionsJson is not valid JSON"));
+	}
+
+	TSharedPtr<FJsonObject> Selection = MassBattleUnitEditorMCP::BuildResolvedCreateVatUnitSpecFromSelection(Options);
+	if (!Selection.IsValid())
+	{
+		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("Failed to build create VAT unit spec from selection."));
+	}
+
+	const TSharedPtr<FJsonObject>* SpecPtr = nullptr;
+	if (!Selection->TryGetObjectField(TEXT("spec"), SpecPtr) || !SpecPtr || !SpecPtr->IsValid())
+	{
+		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("Selection resolver did not produce a spec."));
+	}
+
+	const bool bCompactResponse = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Options, { TEXT("compact_response") }, false);
+	const FString ApplyResult = MCP_EditorApplyCreateVatUnit(MassBattleUnitEditorMCP::ToJsonString(*SpecPtr), bSaveAssets);
+	TSharedPtr<FJsonObject> ApplyJson = MassBattleUnitEditorMCP::ParseObject(ApplyResult);
+
+	TSharedPtr<FJsonObject> Root = MassBattleUnitEditorMCP::MakeSuccess();
+	Root->SetStringField(TEXT("editor_workflow"), TEXT("MassBattleEditor selection -> VAT skeletal unit authoring apply"));
+	Root->SetBoolField(TEXT("save_assets"), bSaveAssets);
+	Root->SetBoolField(TEXT("compact_response"), bCompactResponse);
+	if (ApplyJson.IsValid())
+	{
+		Root->SetBoolField(TEXT("success"), MassBattleUnitEditorMCP::JsonObjectFieldBool(ApplyJson, TEXT("success"), false));
+		if (bCompactResponse)
+		{
+			MassBattleUnitEditorMCP::CopyArrayField(Selection, Root, TEXT("selected_assets"));
+			MassBattleUnitEditorMCP::CopyArrayField(Selection, Root, TEXT("warnings"));
+			Root->SetObjectField(TEXT("apply_summary"), MassBattleUnitEditorMCP::MakeCompactCreateVatApplySummary(ApplyJson));
+		}
+		else
+		{
+			Root->SetObjectField(TEXT("selection"), Selection);
+			Root->SetObjectField(TEXT("resolved_spec"), *SpecPtr);
+			Root->SetObjectField(TEXT("apply_result"), ApplyJson);
+		}
+	}
+	else
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("MCP_EditorApplyCreateVatUnit returned invalid JSON."));
+		Root->SetStringField(TEXT("apply_result_raw"), ApplyResult);
+	}
+	return MassBattleUnitEditorMCP::ToJsonString(Root);
+}
+
 FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& SpecJson)
 {
 	TSharedPtr<FJsonObject> Spec = MassBattleUnitEditorMCP::ParseObject(SpecJson);
@@ -2439,7 +4072,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("skeletal_mesh"), TEXT("mesh"), TEXT("source_mesh") }, SkeletalMeshPath);
 
 	FString AssetSlug;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("asset_slug"), TEXT("unit_slug"), TEXT("file_name") }, AssetSlug);
+	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("unit_name") }, AssetSlug);
 	if (AssetSlug.IsEmpty() && !SkeletalMeshPath.IsEmpty())
 	{
 		FString PackagePath;
@@ -2472,6 +4105,23 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	{
 		AnimationSearchPath = SourcePackagePath;
 	}
+	TArray<TSharedPtr<FJsonValue>> Warnings;
+	FString AnimationNameFilter;
+	bool bAnimationNameFilterSupplied = false;
+	if (Spec->HasField(TEXT("animation_name_filter")))
+	{
+		Spec->TryGetStringField(TEXT("animation_name_filter"), AnimationNameFilter);
+		bAnimationNameFilterSupplied = true;
+	}
+	else if (Spec->HasField(TEXT("file_name")))
+	{
+		Spec->TryGetStringField(TEXT("file_name"), AnimationNameFilter);
+		bAnimationNameFilterSupplied = true;
+	}
+	if (!bAnimationNameFilterSupplied)
+	{
+		MassBattleUnitEditorMCP::AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_animation_name_filter"), TEXT("animation_name_filter was not supplied; using an empty filter so all same-skeleton AnimSequence assets in animation_search_path can be considered."), TEXT("animation_name_filter"));
+	}
 
 	const FString StyleFamily = MassBattleUnitEditorMCP::ResolveStyleFamily(Spec, Organization, AssetSlug + TEXT(" ") + SkeletalMeshPath + TEXT(" ") + SourcePackagePath);
 	const FString FamilyFolder = MassBattleUnitEditorMCP::ResolveFamilyFolder(Organization, StyleFamily);
@@ -2485,11 +4135,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 		OutputRoot = OutputRoot / FamilyFolder;
 	}
 
-	FString GeneratedFolderName = MassBattleUnitEditorMCP::StringFieldOrDefault(AuthoringDefaults, TEXT("generated_folder_name"), TEXT("Gen_{asset_slug}"));
-	GeneratedFolderName.ReplaceInline(TEXT("{asset_slug}"), *AssetSlug);
+	FString GeneratedFolderName = MassBattleUnitEditorMCP::StringFieldOrDefault(AuthoringDefaults, TEXT("generated_folder_name"), TEXT("Gen_{unit_name}"));
+	GeneratedFolderName.ReplaceInline(TEXT("{unit_name}"), *AssetSlug);
 
 	FString GeneratedPackagePath = OutputRoot / GeneratedFolderName;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("generated_package_path"), TEXT("output_package_path"), TEXT("package_path") }, GeneratedPackagePath);
+	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("target_package_path") }, GeneratedPackagePath);
 
 	const FString StaticMeshName = MassBattleUnitEditorMCP::ResolveAssetName(Spec, AuthoringDefaults, TEXT("static_mesh_name"), TEXT("static_mesh_prefix"), TEXT("SM_"), AssetSlug);
 	const FString UnitAssetName = MassBattleUnitEditorMCP::ResolveAssetName(Spec, AuthoringDefaults, TEXT("unit_asset_name"), TEXT("unit_asset_prefix"), TEXT("AgentConfig_"), AssetSlug);
@@ -2498,7 +4148,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	const FString MaterialName = MassBattleUnitEditorMCP::ResolveAssetName(Spec, AuthoringDefaults, TEXT("material_asset_name"), TEXT("material_prefix"), TEXT(""), AssetSlug);
 
 	FString UnitPackagePath = GeneratedPackagePath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("unit_package_path") }, UnitPackagePath);
+	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("target_unit_package_path") }, UnitPackagePath);
 	FString RendererPackagePath = GeneratedPackagePath;
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("renderer_package_path") }, RendererPackagePath);
 
@@ -2513,13 +4163,42 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 		PlannedRendererClassPath = MassBattleUnitEditorMCP::EnsureGeneratedClassPath(PlannedRendererClassPath);
 	}
 
+	FString ParentMaterialPath = MassBattleUnitEditorMCP::ResolvePathFromSpecOrDefault(
+		Spec,
+		{ TEXT("parent_material") },
+		AuthoringDefaults,
+		{ TEXT("default_parent_material"), TEXT("parent_material") },
+		MassBattleUnitEditorMCP::DefaultVatParentMaterialPath,
+		TEXT("defaulted_parent_material"),
+		TEXT("parent_material"),
+		Warnings);
+	FString SourceRendererClassPath = MassBattleUnitEditorMCP::ResolvePathFromSpecOrDefault(
+		Spec,
+		{ TEXT("source_renderer_class"), TEXT("renderer_template_class"), TEXT("template_renderer_class") },
+		AuthoringDefaults,
+		{ TEXT("default_source_renderer_class"), TEXT("source_renderer_class"), TEXT("renderer_template_class") },
+		MassBattleUnitEditorMCP::DefaultAgentRendererClassPath,
+		TEXT("defaulted_source_renderer_class"),
+		TEXT("source_renderer_class"),
+		Warnings);
+	SourceRendererClassPath = MassBattleUnitEditorMCP::EnsureGeneratedClassPath(SourceRendererClassPath);
+	FString NiagaraSystemPath = MassBattleUnitEditorMCP::ResolvePathFromSpecOrDefault(
+		Spec,
+		{ TEXT("niagara_system"), TEXT("niagara"), TEXT("niagara_system_asset") },
+		AuthoringDefaults,
+		{ TEXT("default_niagara_system"), TEXT("niagara_system") },
+		MassBattleUnitEditorMCP::DefaultAgentRendererNiagaraPath,
+		TEXT("defaulted_niagara_system"),
+		TEXT("niagara_system"),
+		Warnings);
+
 	TSharedPtr<FJsonObject> Layout = MakeShared<FJsonObject>();
 	Layout->SetStringField(TEXT("style_profile"), StyleId);
 	Layout->SetStringField(TEXT("recipe_id"), RecipeId);
 	Layout->SetStringField(TEXT("style_family"), StyleFamily);
-	Layout->SetStringField(TEXT("asset_slug"), AssetSlug);
-	Layout->SetStringField(TEXT("generated_package_path"), GeneratedPackagePath);
-	Layout->SetStringField(TEXT("unit_package_path"), UnitPackagePath);
+	Layout->SetStringField(TEXT("unit_name"), AssetSlug);
+	Layout->SetStringField(TEXT("target_package_path"), GeneratedPackagePath);
+	Layout->SetStringField(TEXT("target_unit_package_path"), UnitPackagePath);
 	Layout->SetStringField(TEXT("static_mesh_path"), MassBattleUnitEditorMCP::MakeObjectPath(GeneratedPackagePath, StaticMeshName));
 	Layout->SetStringField(TEXT("unit_path"), MassBattleUnitEditorMCP::MakeObjectPath(UnitPackagePath, UnitAssetName));
 	Layout->SetStringField(TEXT("renderer_class_path"), PlannedRendererClassPath);
@@ -2529,6 +4208,10 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	Layout->SetStringField(TEXT("renderer_asset_name"), RendererAssetName);
 	Layout->SetStringField(TEXT("material_asset_name"), MaterialName);
 	Layout->SetStringField(TEXT("material_name_prefix"), MaterialName);
+	Layout->SetStringField(TEXT("animation_name_filter"), AnimationNameFilter);
+	Layout->SetStringField(TEXT("parent_material"), ParentMaterialPath);
+	Layout->SetStringField(TEXT("source_renderer_class"), SourceRendererClassPath);
+	Layout->SetStringField(TEXT("niagara_system"), NiagaraSystemPath);
 
 	TArray<TSharedPtr<FJsonValue>> Steps;
 	TArray<TSharedPtr<FJsonValue>> Missing;
@@ -2567,11 +4250,16 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 
 		if (!AnimationSearchPath.IsEmpty())
 		{
-			const FString AnimResult = UMassBattleEditorMCPApi::MCP_FindAndFillAnimSequences(SkeletalMeshPath, AnimationSearchPath, AssetSlug);
+			const FString AnimResult = UMassBattleEditorMCPApi::MCP_FindAndFillAnimSequences(SkeletalMeshPath, AnimationSearchPath, AnimationNameFilter);
 			TSharedPtr<FJsonObject> AnimJson = MassBattleUnitEditorMCP::ParseObject(AnimResult);
 			if (!AnimJson.IsValid() || !AnimJson->GetBoolField(TEXT("success")))
 			{
 				return AnimResult;
+			}
+			const FString FoundAnimsJson = MassBattleUnitEditorMCP::JsonObjectFieldToString(AnimJson, TEXT("anims"));
+			if (!MassBattleUnitEditorMCP::FoundAnimsJsonHasEntries(FoundAnimsJson))
+			{
+				MassBattleUnitEditorMCP::TryFillAnimDiscoveryWithCompatibleFallback(SkeletalMeshPath, AnimationSearchPath, AnimationNameFilter, AnimJson, Warnings);
 			}
 			Discovery->SetObjectField(TEXT("animations"), AnimJson);
 			MassBattleUnitEditorMCP::AddStep(Steps, TEXT("find_animations"), TEXT("MCP_FindAndFillAnimSequences"), TEXT("done"), TEXT("Animation sequence candidates were discovered and categorized."));
@@ -2685,21 +4373,44 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 
 	FString TemplateUnitPath;
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("template_unit"), TEXT("source_unit") }, TemplateUnitPath);
+	bool bTemplateUnitDefaulted = false;
+	FString TemplateUnitDefaultSource;
+	if (ExistingUnitPath.IsEmpty() && TemplateUnitPath.IsEmpty())
+	{
+		bTemplateUnitDefaulted = MassBattleUnitEditorMCP::ResolveDefaultTemplateUnitForFamily(AuthoringDefaults, StyleFamily, TemplateUnitPath, TemplateUnitDefaultSource);
+		if (bTemplateUnitDefaulted)
+		{
+			MassBattleUnitEditorMCP::AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_template_unit"), FString::Printf(TEXT("template_unit was not supplied; using %s: %s"), *TemplateUnitDefaultSource, *TemplateUnitPath), TEXT("template_unit"));
+		}
+		else
+		{
+			MassBattleUnitEditorMCP::AddIssue(Warnings, TEXT("warning"), TEXT("missing_template_unit_default"), TEXT("template_unit was not supplied and no default template is configured. MCP_UnitCreate will try its own default; if that is empty, apply will fail before creating the unit."), TEXT("template_unit"));
+		}
+	}
 	TSharedPtr<FJsonObject> UnitCreateSpec;
-	if (!TemplateUnitPath.IsEmpty())
+	if (ExistingUnitPath.IsEmpty())
 	{
 		UnitCreateSpec = MakeShared<FJsonObject>();
-		UnitCreateSpec->SetStringField(TEXT("template_unit"), TemplateUnitPath);
+		if (!TemplateUnitPath.IsEmpty())
+		{
+			UnitCreateSpec->SetStringField(TEXT("template_unit"), TemplateUnitPath);
+			UnitCreateSpec->SetBoolField(TEXT("template_unit_defaulted"), bTemplateUnitDefaulted);
+			if (!TemplateUnitDefaultSource.IsEmpty())
+			{
+				UnitCreateSpec->SetStringField(TEXT("template_unit_default_source"), TemplateUnitDefaultSource);
+			}
+		}
 		UnitCreateSpec->SetStringField(TEXT("asset_name"), UnitAssetName);
 		UnitCreateSpec->SetStringField(TEXT("package_path"), UnitPackagePath);
 		Discovery->SetObjectField(TEXT("unit_create_spec"), UnitCreateSpec);
 	}
 
-	FString ParentMaterialPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("parent_material") }, ParentMaterialPath);
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("convert_mesh"), TEXT("MCP_ConvertSkeletalMeshToStaticMeshWithLODs"), SkeletalMeshPath.IsEmpty() ? TEXT("blocked") : TEXT("planned"), TEXT("Convert the source skeletal mesh into the planned MassBattle static mesh asset."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_materials"), TEXT("MCP_CreateMaterialInstanceForStaticMeshWithLODs"), ParentMaterialPath.IsEmpty() ? TEXT("blocked") : TEXT("planned"), TEXT("Create material instances for the generated static mesh LOD material slots."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("apply_material_overrides"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), MassBattleUnitEditorMCP::HasMaterialOverrides(Spec) ? TEXT("planned") : TEXT("skipped"), TEXT("Optionally override generated StaticMesh material slots with explicit materials."));
+	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_vat_data_and_textures"), TEXT("MassBattleTools.CreateDataAsset/CreateVATTextures"), TEXT("planned"), TEXT("Create or reuse AnimToTextureDataAsset and VAT Texture2D assets."));
+	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("bake_vat_textures"), TEXT("UAnimToTextureBPLibrary.AnimationToTexture"), TEXT("planned"), TEXT("Bake animation frames into VAT textures using the MassBattleTools DoAll flow."));
+	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("update_vat_materials"), TEXT("UAnimToTextureBPLibrary.UpdateMaterialInstanceFromDataAsset"), TEXT("planned"), TEXT("Write baked VAT and AnimData texture parameters into generated material instances."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("duplicate_renderer"), TEXT("MCP_DuplicateClassAsset"), TEXT("planned"), TEXT("Duplicate or reuse a renderer Blueprint class for the unit subtype."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("set_renderer_defaults"), TEXT("MCP_SetClassDefaultProperties"), TEXT("planned"), TEXT("Set renderer CDO mesh, Niagara system, and SubType after generated assets exist."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("merge_unit_data"), TEXT("MCP_UnitPlanMergeUpdate"), ExistingUnitPath.IsEmpty() ? TEXT("planned_after_clone") : TEXT("done"), TEXT("Union-merge Visualize, LODShared, AnimShared, and any user unit_patch fields."));
@@ -2713,6 +4424,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	Root->SetObjectField(TEXT("unit_patch"), UnitPatch);
 	Root->SetArrayField(TEXT("steps"), Steps);
 	Root->SetArrayField(TEXT("missing"), Missing);
+	Root->SetArrayField(TEXT("warnings"), Warnings);
 	return MassBattleUnitEditorMCP::ToJsonString(Root);
 }
 
@@ -2746,6 +4458,14 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 	const TSharedPtr<FJsonObject>* DiscoveryPtr = nullptr;
 	const TSharedPtr<FJsonObject> Layout = Plan->TryGetObjectField(TEXT("resolved_layout"), LayoutPtr) && LayoutPtr && LayoutPtr->IsValid() ? *LayoutPtr : nullptr;
 	const TSharedPtr<FJsonObject> Discovery = Plan->TryGetObjectField(TEXT("discovery"), DiscoveryPtr) && DiscoveryPtr && DiscoveryPtr->IsValid() ? *DiscoveryPtr : nullptr;
+	const TArray<TSharedPtr<FJsonValue>>* PlanWarnings = nullptr;
+	if (Plan->TryGetArrayField(TEXT("warnings"), PlanWarnings) && PlanWarnings)
+	{
+		for (const TSharedPtr<FJsonValue>& Warning : *PlanWarnings)
+		{
+			Issues.Add(Warning);
+		}
+	}
 
 	if (!Layout.IsValid())
 	{
@@ -2759,16 +4479,43 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 	FString TemplateUnitPath;
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("template_unit"), TEXT("source_unit") }, TemplateUnitPath);
 	FString ParentMaterialPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("parent_material") }, ParentMaterialPath);
+	if (Layout.IsValid())
+	{
+		ParentMaterialPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("parent_material"), FString());
+	}
+	if (ParentMaterialPath.IsEmpty())
+	{
+		MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("parent_material") }, ParentMaterialPath);
+	}
 	FString SourceRendererClassPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("source_renderer_class"), TEXT("renderer_template_class"), TEXT("template_renderer_class") }, SourceRendererClassPath);
+	if (Layout.IsValid())
+	{
+		SourceRendererClassPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("source_renderer_class"), FString());
+	}
+	if (SourceRendererClassPath.IsEmpty())
+	{
+		MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("source_renderer_class"), TEXT("renderer_template_class"), TEXT("template_renderer_class") }, SourceRendererClassPath);
+	}
 	SourceRendererClassPath = MassBattleUnitEditorMCP::EnsureGeneratedClassPath(SourceRendererClassPath);
 	FString NiagaraSystemPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("niagara_system"), TEXT("niagara"), TEXT("niagara_system_asset") }, NiagaraSystemPath);
+	if (Layout.IsValid())
+	{
+		NiagaraSystemPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("niagara_system"), FString());
+	}
+	if (NiagaraSystemPath.IsEmpty())
+	{
+		MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("niagara_system"), TEXT("niagara"), TEXT("niagara_system_asset") }, NiagaraSystemPath);
+	}
 
 	const FString StaticMeshPath = Layout.IsValid() ? MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("static_mesh_path"), FString()) : FString();
 	const FString RendererClassPath = Layout.IsValid() ? MassBattleUnitEditorMCP::EnsureGeneratedClassPath(MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("renderer_class_path"), FString())) : FString();
 	const FString PlannedUnitPath = Layout.IsValid() ? MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("unit_path"), FString()) : FString();
+	const TSharedPtr<FJsonObject>* UnitCreateSpecPtr = nullptr;
+	const bool bHasUnitCreateSpec = Discovery.IsValid() && Discovery->TryGetObjectField(TEXT("unit_create_spec"), UnitCreateSpecPtr) && UnitCreateSpecPtr && UnitCreateSpecPtr->IsValid();
+	if (TemplateUnitPath.IsEmpty() && bHasUnitCreateSpec)
+	{
+		(*UnitCreateSpecPtr)->TryGetStringField(TEXT("template_unit"), TemplateUnitPath);
+	}
 
 	bool bOverwriteExisting = false;
 	Spec->TryGetBoolField(TEXT("overwrite_existing"), bOverwriteExisting);
@@ -2869,6 +4616,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("apply_material_overrides"), TEXT("skipped"), TEXT("No material_overrides were supplied."));
 	}
 
+	const bool bBakeVat = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") }, true);
+	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("create_vat_data_and_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Create or reuse AnimToTextureDataAsset and VAT Texture2D assets."));
+	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("bake_vat_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Run UAnimToTextureBPLibrary::AnimationToTexture for each LOD setting."));
+	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("update_vat_materials"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Update VAT material instance parameters from the baked DataAsset."));
+
 	if (!RendererClassPath.IsEmpty() && MassBattleUnitEditorMCP::AssetExists(RendererClassPath))
 	{
 		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("duplicate_renderer"), TEXT("skipped_existing"), RendererClassPath);
@@ -2897,10 +4649,10 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 		MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("niagara_system_not_found"), FString::Printf(TEXT("niagara_system does not exist or failed to load: %s"), *NiagaraSystemPath), TEXT("niagara_system"));
 	}
 
-	if (TargetUnitPath.IsEmpty() && TemplateUnitPath.IsEmpty())
+	if (TargetUnitPath.IsEmpty() && !bHasUnitCreateSpec)
 	{
-		MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("missing_unit_target"), TEXT("target_unit or template_unit is required to write unit data."), TEXT("target_unit"));
-		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("merge_unit_data"), TEXT("blocked"), TEXT("No unit target/template was supplied."));
+		MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("missing_unit_target"), TEXT("target_unit or generated unit_create_spec is required to write unit data."), TEXT("target_unit"));
+		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("merge_unit_data"), TEXT("blocked"), TEXT("No unit target or create spec was resolved."));
 	}
 	else if (!TargetUnitPath.IsEmpty())
 	{
@@ -2925,13 +4677,18 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 	}
 	else
 	{
-		if (!MassBattleUnitEditorMCP::AssetExists(TemplateUnitPath))
+		if (!TemplateUnitPath.IsEmpty() && !MassBattleUnitEditorMCP::AssetExists(TemplateUnitPath))
 		{
 			MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("template_unit_not_found"), FString::Printf(TEXT("template_unit does not exist or failed to load: %s"), *TemplateUnitPath), TEXT("template_unit"));
 			MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("clone_unit"), TEXT("blocked"), TEXT("template_unit cannot be loaded."));
 		}
 		else
 		{
+			if (TemplateUnitPath.IsEmpty())
+			{
+				MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("warning"), TEXT("unit_create_will_use_mcp_default_template"), TEXT("unit_create_spec has no template_unit; MCP_UnitCreate will resolve authoring_defaults.default_unit_template at apply time."), TEXT("template_unit"));
+			}
+
 			if (!PlannedUnitPath.IsEmpty() && MassBattleUnitEditorMCP::AssetExists(PlannedUnitPath))
 			{
 				if (bOverwriteExisting)
@@ -3037,12 +4794,17 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	FString SkeletalMeshPath;
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("skeletal_mesh"), TEXT("mesh"), TEXT("source_mesh") }, SkeletalMeshPath);
 	FString StaticMeshPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("static_mesh_path"), FString());
-	const FString GeneratedPackagePath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("generated_package_path"), FString());
+	const FString GeneratedPackagePath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("target_package_path"), FString());
+	const FString AssetSlug = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("unit_name"), MassBattleUnitEditorMCP::AssetNameFromObjectPath(StaticMeshPath));
 	const FString StaticMeshAssetName = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("static_mesh_asset_name"), MassBattleUnitEditorMCP::AssetNameFromObjectPath(StaticMeshPath));
-	const FString MaterialAssetName = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("material_asset_name"), MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("asset_slug"), StaticMeshAssetName));
+	const FString MaterialAssetName = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("material_asset_name"), MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("unit_name"), StaticMeshAssetName));
+	const FString VatDataAssetPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("vat_data_asset_path"), FString());
+	const FString VatDataAssetName = MassBattleUnitEditorMCP::AssetNameFromObjectPath(VatDataAssetPath).IsEmpty() ? TEXT("VAT_") + AssetSlug : MassBattleUnitEditorMCP::AssetNameFromObjectPath(VatDataAssetPath);
 	FString RendererClassPath = MassBattleUnitEditorMCP::EnsureGeneratedClassPath(MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("renderer_class_path"), FString()));
 	const FString RendererAssetName = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("renderer_asset_name"), MassBattleUnitEditorMCP::AssetNameFromObjectPath(RendererClassPath));
 	const FString RendererPackagePath = MassBattleUnitEditorMCP::PackagePathFromObjectPath(RendererClassPath);
+	TArray<FString> GeneratedVatSavePaths;
+	int32 GeneratedVatSampleRate = 24;
 
 	bool bOverwriteExisting = false;
 	Spec->TryGetBoolField(TEXT("overwrite_existing"), bOverwriteExisting);
@@ -3083,7 +4845,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	}
 
 	FString ParentMaterialPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("parent_material") }, ParentMaterialPath);
+	ParentMaterialPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("parent_material"), FString());
+	if (ParentMaterialPath.IsEmpty())
+	{
+		MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("parent_material") }, ParentMaterialPath);
+	}
 	bool bRefreshMaterials = bOverwriteExisting;
 	Spec->TryGetBoolField(TEXT("refresh_materials"), bRefreshMaterials);
 	if (ParentMaterialPath.IsEmpty())
@@ -3137,8 +4903,55 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("apply_material_overrides"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), TEXT("skipped"), TEXT("No material_overrides were supplied."));
 	}
 
+	const bool bBakeVat = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") }, true);
+	const bool bAllowStaticFallback = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("allow_static_fallback"), TEXT("allow_missing_anims"), TEXT("allow_no_vat") }, true);
+	bool bVatBakeCompleted = false;
+	if (bBakeVat)
+	{
+		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("bake_vat_textures"), TEXT("MassBattleTools.CreateVATTextures -> AnimationToTexture -> UpdateMaterialInstance"), TEXT("running"), TEXT("Baking VAT textures and updating generated material instances."));
+		TSharedPtr<FJsonObject> BakeResult = MassBattleUnitEditorMCP::BakeVatWithMassBattleToolsFlow(Spec, Discovery, SkeletalMeshPath, StaticMeshPath, GeneratedPackagePath, AssetSlug, VatDataAssetName, UnitPatch, GeneratedVatSavePaths);
+		Step->SetObjectField(TEXT("result"), BakeResult);
+		if (!BakeResult.IsValid() || !BakeResult->GetBoolField(TEXT("success")))
+		{
+			FString BakeError;
+			if (BakeResult.IsValid())
+			{
+				BakeResult->TryGetStringField(TEXT("error"), BakeError);
+			}
+			if (bAllowStaticFallback && BakeError.Contains(TEXT("No animation sequences"), ESearchCase::IgnoreCase))
+			{
+				Step->SetStringField(TEXT("status"), TEXT("warning_static_fallback"));
+				Step->SetStringField(TEXT("warning"), TEXT("No animation sequences were available; continuing unit creation without refreshed VAT animation data. Provide animations or animation_search_path to complete animated VAT output."));
+				Root->SetBoolField(TEXT("static_fallback_used"), true);
+			}
+			else
+			{
+				Step->SetStringField(TEXT("status"), TEXT("failed"));
+				Root->SetBoolField(TEXT("success"), false);
+				Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+				return MassBattleUnitEditorMCP::ToJsonString(Root);
+			}
+		}
+		else
+		{
+			double SampleRateNumber = 24.0;
+			BakeResult->TryGetNumberField(TEXT("sample_rate"), SampleRateNumber);
+			GeneratedVatSampleRate = static_cast<int32>(SampleRateNumber);
+			bVatBakeCompleted = true;
+			Step->SetStringField(TEXT("status"), TEXT("done"));
+		}
+	}
+	else
+	{
+		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("bake_vat_textures"), TEXT("MassBattleTools.CreateVATTextures -> AnimationToTexture"), TEXT("skipped"), TEXT("bake_vat=false."));
+	}
+
 	FString SourceRendererClassPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("source_renderer_class"), TEXT("renderer_template_class"), TEXT("template_renderer_class") }, SourceRendererClassPath);
+	SourceRendererClassPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("source_renderer_class"), FString());
+	if (SourceRendererClassPath.IsEmpty())
+	{
+		MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("source_renderer_class"), TEXT("renderer_template_class"), TEXT("template_renderer_class") }, SourceRendererClassPath);
+	}
 	SourceRendererClassPath = MassBattleUnitEditorMCP::EnsureGeneratedClassPath(SourceRendererClassPath);
 	if (MassBattleUnitEditorMCP::AssetExists(RendererClassPath))
 	{
@@ -3167,7 +4980,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	}
 
 	FString NiagaraSystemPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("niagara_system"), TEXT("niagara"), TEXT("niagara_system_asset") }, NiagaraSystemPath);
+	NiagaraSystemPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("niagara_system"), FString());
+	if (NiagaraSystemPath.IsEmpty())
+	{
+		MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("niagara_system"), TEXT("niagara"), TEXT("niagara_system_asset") }, NiagaraSystemPath);
+	}
 	int32 SubType = 0;
 	double SubTypeNumber = 0.0;
 	if (Spec->TryGetNumberField(TEXT("subtype"), SubTypeNumber) || Spec->TryGetNumberField(TEXT("sub_type"), SubTypeNumber))
@@ -3204,35 +5021,44 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 
 	FString TargetUnitPath;
 	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("target_unit"), TEXT("unit_path"), TEXT("existing_unit") }, TargetUnitPath);
-	FString TemplateUnitPath;
-	MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("template_unit"), TEXT("source_unit") }, TemplateUnitPath);
 	const FString PlannedUnitPath = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("unit_path"), FString());
+	FString FinalUnitPath;
 
 	if (!TargetUnitPath.IsEmpty())
 	{
-		const TSharedPtr<FJsonObject>* ExistingMergePlan = nullptr;
-		if (Discovery->TryGetObjectField(TEXT("existing_unit_merge_plan"), ExistingMergePlan) && ExistingMergePlan && ExistingMergePlan->IsValid())
+		TSharedPtr<FJsonObject> MergeStep = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("merge_unit_data"), TEXT("MCP_UnitPlanMergeUpdate -> MCP_UnitApplyPlan"), TEXT("running"), TEXT("Creating and applying merge plan for the target unit."));
+		const FString MergePlanResult = UMassBattleUnitMCPApi::MCP_UnitPlanMergeUpdate(TargetUnitPath, MassBattleUnitEditorMCP::ToJsonString(UnitPatch));
+		TSharedPtr<FJsonObject> MergePlanJson = MassBattleUnitEditorMCP::ParseObject(MergePlanResult);
+		if (!MergePlanJson.IsValid() || !MergePlanJson->GetBoolField(TEXT("success")))
 		{
-			FString PlanId;
-			(*ExistingMergePlan)->TryGetStringField(TEXT("plan_id"), PlanId);
-			TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("merge_unit_data"), TEXT("MCP_UnitApplyPlan"), TEXT("running"), TEXT("Applying existing-unit merge plan."));
-			const FString ApplyResult = UMassBattleUnitMCPApi::MCP_UnitApplyPlan(PlanId, bSaveAssets);
-			MassBattleUnitEditorMCP::SetStepResult(Step, ApplyResult);
-			TSharedPtr<FJsonObject> ApplyJson = MassBattleUnitEditorMCP::ParseObject(ApplyResult);
-			Step->SetStringField(TEXT("status"), ApplyJson.IsValid() && ApplyJson->GetBoolField(TEXT("success")) ? TEXT("done") : TEXT("failed"));
-			if (!ApplyJson.IsValid() || !ApplyJson->GetBoolField(TEXT("success")))
-			{
-				Root->SetBoolField(TEXT("success"), false);
-				Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
-				return MassBattleUnitEditorMCP::ToJsonString(Root);
-			}
+			MassBattleUnitEditorMCP::SetStepResult(MergeStep, MergePlanResult);
+			MergeStep->SetStringField(TEXT("status"), TEXT("failed"));
+			Root->SetBoolField(TEXT("success"), false);
+			Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+			return MassBattleUnitEditorMCP::ToJsonString(Root);
 		}
-		else
+
+		FString MergePlanId;
+		MergePlanJson->TryGetStringField(TEXT("plan_id"), MergePlanId);
+		const FString MergeApplyResult = UMassBattleUnitMCPApi::MCP_UnitApplyPlan(MergePlanId, bSaveAssets);
+		TSharedPtr<FJsonObject> MergeResult = MakeShared<FJsonObject>();
+		MergeResult->SetObjectField(TEXT("merge_plan"), MergePlanJson);
+		TSharedPtr<FJsonObject> MergeApplyJson = MassBattleUnitEditorMCP::ParseObject(MergeApplyResult);
+		if (MergeApplyJson.IsValid())
 		{
-			MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("merge_unit_data"), TEXT("MCP_UnitApplyPlan"), TEXT("blocked"), TEXT("Plan did not contain an existing_unit_merge_plan."));
+			MergeResult->SetObjectField(TEXT("apply_result"), MergeApplyJson);
 		}
+		MergeStep->SetObjectField(TEXT("result"), MergeResult);
+		MergeStep->SetStringField(TEXT("status"), MergeApplyJson.IsValid() && MergeApplyJson->GetBoolField(TEXT("success")) ? TEXT("done") : TEXT("failed"));
+		if (!MergeApplyJson.IsValid() || !MergeApplyJson->GetBoolField(TEXT("success")))
+		{
+			Root->SetBoolField(TEXT("success"), false);
+			Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+			return MassBattleUnitEditorMCP::ToJsonString(Root);
+		}
+		FinalUnitPath = TargetUnitPath;
 	}
-	else if (!TemplateUnitPath.IsEmpty())
+	else
 	{
 		const TSharedPtr<FJsonObject>* UnitCreateSpec = nullptr;
 		if (Discovery->TryGetObjectField(TEXT("unit_create_spec"), UnitCreateSpec) && UnitCreateSpec && UnitCreateSpec->IsValid())
@@ -3287,24 +5113,38 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 				Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
 				return MassBattleUnitEditorMCP::ToJsonString(Root);
 			}
+			FinalUnitPath = PlannedUnitPath;
 		}
 		else
 		{
 			MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("create_unit"), TEXT("MCP_UnitCreate"), TEXT("blocked"), TEXT("Plan did not contain a unit_create_spec."));
+			Root->SetBoolField(TEXT("success"), false);
+			Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+			return MassBattleUnitEditorMCP::ToJsonString(Root);
 		}
 	}
-	else
+
+	if (bVatBakeCompleted && !FinalUnitPath.IsEmpty())
 	{
-		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("merge_unit_data"), TEXT("MCP_UnitPlanMergeUpdate"), TEXT("blocked"), TEXT("target_unit or template_unit is required to write unit data."));
-		Root->SetBoolField(TEXT("success"), false);
-		Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
-		return MassBattleUnitEditorMCP::ToJsonString(Root);
+		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("set_runtime_animation_defaults"), TEXT("MassBattleTools.CreateDataAsset.SetMembers(Animating)"), TEXT("running"), TEXT("Writing Animating.SampleRate directly like the editor utility widget."));
+		MassBattleUnitEditorMCP::ApplyGeneratedUnitRuntimeAnimationDefaults(FinalUnitPath, GeneratedVatSampleRate);
+		Step->SetStringField(TEXT("status"), TEXT("done"));
+		Step->SetStringField(TEXT("unit_path"), FinalUnitPath);
+		Step->SetNumberField(TEXT("sample_rate"), GeneratedVatSampleRate);
 	}
 
 	if (bSaveAssets)
 	{
 		TArray<FString> SavePaths = { StaticMeshPath, MassBattleUnitEditorMCP::BlueprintPathFromGeneratedClassPath(RendererClassPath) };
 		MassBattleUnitEditorMCP::AddStaticMeshMaterialPaths(StaticMeshPath, GeneratedPackagePath, SavePaths);
+		for (const FString& VatSavePath : GeneratedVatSavePaths)
+		{
+			SavePaths.AddUnique(VatSavePath);
+		}
+		if (!FinalUnitPath.IsEmpty())
+		{
+			SavePaths.AddUnique(FinalUnitPath);
+		}
 		for (const FString& SavePath : SavePaths)
 		{
 			if (SavePath.IsEmpty() || !MassBattleUnitEditorMCP::AssetExists(SavePath))
@@ -3369,7 +5209,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanOrganizeUnitAssets(const FStr
 	}
 
 	const FString UnitAssetName = MassBattleUnitEditorMCP::AssetNameFromObjectPath(UnitPath);
-	FString AssetSlug = MassBattleUnitEditorMCP::StringFieldOrDefault(Options, TEXT("asset_slug"), UnitAssetName);
+	FString AssetSlug = MassBattleUnitEditorMCP::StringFieldOrDefault(Options, TEXT("unit_name"), UnitAssetName);
 	const FString UnitAssetPrefix = MassBattleUnitEditorMCP::StringFieldOrDefault(AuthoringDefaults, TEXT("unit_asset_prefix"), TEXT("AgentConfig_"));
 	if (!UnitAssetPrefix.IsEmpty() && AssetSlug.StartsWith(UnitAssetPrefix))
 	{
@@ -3395,14 +5235,13 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanOrganizeUnitAssets(const FStr
 		OutputRoot = OutputRoot / FamilyFolder;
 	}
 
-	FString GeneratedFolderName = MassBattleUnitEditorMCP::StringFieldOrDefault(AuthoringDefaults, TEXT("generated_folder_name"), TEXT("Gen_{asset_slug}"));
+	FString GeneratedFolderName = MassBattleUnitEditorMCP::StringFieldOrDefault(AuthoringDefaults, TEXT("generated_folder_name"), TEXT("Gen_{unit_name}"));
 	Options->TryGetStringField(TEXT("generated_folder_name"), GeneratedFolderName);
 	Options->TryGetStringField(TEXT("target_folder_name"), GeneratedFolderName);
-	GeneratedFolderName.ReplaceInline(TEXT("{asset_slug}"), *AssetSlug);
+	GeneratedFolderName.ReplaceInline(TEXT("{unit_name}"), *AssetSlug);
 
 	FString TargetPackagePath = OutputRoot / GeneratedFolderName;
 	Options->TryGetStringField(TEXT("target_package_path"), TargetPackagePath);
-	Options->TryGetStringField(TEXT("output_package_path"), TargetPackagePath);
 
 	TArray<FString> ManagedRoots;
 	MassBattleUnitEditorMCP::AddUniqueRoot(ManagedRoots, CurrentUnitPackagePath);
@@ -3509,7 +5348,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanOrganizeUnitAssets(const FStr
 	Root->SetStringField(TEXT("unit_path"), UnitPath);
 	Root->SetStringField(TEXT("style_profile"), StyleId);
 	Root->SetStringField(TEXT("style_family"), StyleFamily);
-	Root->SetStringField(TEXT("asset_slug"), AssetSlug);
+	Root->SetStringField(TEXT("unit_name"), AssetSlug);
 	Root->SetStringField(TEXT("target_package_path"), TargetPackagePath);
 	Root->SetNumberField(TEXT("dependency_depth"), MaxDependencyDepth);
 	Root->SetBoolField(TEXT("include_sibling_assets"), bIncludeSiblingAssets);
@@ -3688,9 +5527,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorGetStatus()
 	Tools.Add(Tool(TEXT("MCP_EditorPlanAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Use MassBattleEditor functions to plan an AnimShared update for an existing unit.")));
 	Tools.Add(Tool(TEXT("MCP_EditorValidateAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Validate whether an animation-set edit can produce an applicable unit merge plan.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Plan and apply an AnimShared update for an existing unit.")));
-	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Plan the MassBattleEditor VAT skeletal mesh authoring workflow without writing generated assets.")));
-	Tools.Add(Tool(TEXT("MCP_EditorValidateCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Validate required inputs, asset conflicts, and execution readiness for VAT unit authoring.")));
-	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Execute the MassBattleEditor VAT skeletal mesh authoring workflow with dry_run and overwrite safety options.")));
+	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Plan VAT unit authoring with style defaults, inferred fields, fallback animation discovery, and warnings for incomplete AI input.")));
+	Tools.Add(Tool(TEXT("MCP_EditorValidateCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Validate resolved defaults, warnings, asset conflicts, and execution readiness for VAT unit authoring.")));
+	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Execute VAT unit authoring using plan defaults; warnings/execution_steps identify fields the AI should refine.")));
+	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Build a VAT unit create spec from current editor selection or selected_assets, then return a reviewable plan.")));
+	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Build a VAT unit create spec from current editor selection or selected_assets, then execute the create workflow.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Plan moving a unit and its editor-generated linked assets into the selected style layout.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Apply a reviewed linked-asset organization plan; dry_run=true by default.")));
 

@@ -72,6 +72,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
 	static FString MCP_EditorApplyCreateVatUnit(const FString& SpecJson, bool bSaveAssets);
 
+	/** Build a VAT unit create spec from current editor selection or selected_assets, then plan the create workflow. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
+	static FString MCP_EditorPlanCreateVatUnitFromSelection(const FString& OptionsJson);
+
+	/** Build a VAT unit create spec from current editor selection or selected_assets, then apply the create workflow. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
+	static FString MCP_EditorApplyCreateVatUnitFromSelection(const FString& OptionsJson, bool bSaveAssets);
+
 	/** Plan moving a unit and its MassBattle editor-generated linked assets into the selected style layout. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
 	static FString MCP_EditorPlanOrganizeUnitAssets(const FString& UnitPath, const FString& OptionsJson);

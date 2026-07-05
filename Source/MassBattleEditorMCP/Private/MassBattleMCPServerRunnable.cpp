@@ -6,6 +6,67 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+
+namespace
+{
+	bool SendAll(FSocket* Socket, const uint8* Data, int32 TotalBytes)
+	{
+		if (!Socket || !Data || TotalBytes < 0)
+		{
+			return false;
+		}
+
+		int32 TotalSent = 0;
+		const FDateTime Deadline = FDateTime::UtcNow() + FTimespan::FromSeconds(30.0);
+		while (TotalSent < TotalBytes)
+		{
+			int32 BytesSent = 0;
+			const bool bSent = Socket->Send(Data + TotalSent, TotalBytes - TotalSent, BytesSent);
+			if (bSent && BytesSent > 0)
+			{
+				TotalSent += BytesSent;
+				continue;
+			}
+
+			if (FDateTime::UtcNow() > Deadline)
+			{
+				return false;
+			}
+			FPlatformProcess::Sleep(0.001f);
+		}
+		return true;
+	}
+
+	void SendResponse(FSocket* Socket, const FString& Response)
+	{
+		if (!Socket)
+		{
+			return;
+		}
+
+		const FTCHARToUTF8 Utf8Response(*Response);
+		if (Utf8Response.Length() > 0)
+		{
+			SendAll(Socket, reinterpret_cast<const uint8*>(Utf8Response.Get()), Utf8Response.Length());
+		}
+
+		uint8 Delimiter = 0;
+		SendAll(Socket, &Delimiter, 1);
+	}
+
+	FString MakeServerErrorJson(const FString& Error)
+	{
+		TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), Error);
+
+		FString Output;
+		const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+		FJsonSerializer::Serialize(Root, Writer);
+		return Output;
+	}
+}
 
 FMassBattleMCPServerRunnable::FMassBattleMCPServerRunnable(UMassBattleMCPBridge* InBridge, FSocket* InListenerSocket)
 	: Bridge(InBridge)
@@ -120,12 +181,14 @@ void FMassBattleMCPServerRunnable::ProcessMessage(FSocket* InClientSocket, const
 	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Message);
 	if (!FJsonSerializer::Deserialize(Reader, JsonMessage) || !JsonMessage.IsValid())
 	{
+		SendResponse(InClientSocket, MakeServerErrorJson(TEXT("Request was not valid JSON.")));
 		return;
 	}
 
 	FString CommandType;
 	if (!JsonMessage->TryGetStringField(TEXT("command"), CommandType))
 	{
+		SendResponse(InClientSocket, MakeServerErrorJson(TEXT("Request JSON must contain a command string.")));
 		return;
 	}
 
@@ -137,14 +200,5 @@ void FMassBattleMCPServerRunnable::ProcessMessage(FSocket* InClientSocket, const
 	}
 
 	const FString Response = Bridge ? Bridge->ExecuteCommand(CommandType, Params) : TEXT("{\"success\":false,\"error\":\"MassBattle MCP bridge is unavailable\"}");
-
-	int32 BytesSent = 0;
-	const FTCHARToUTF8 Utf8Response(*Response);
-	if (Utf8Response.Length() > 0)
-	{
-		InClientSocket->Send(reinterpret_cast<const uint8*>(Utf8Response.Get()), Utf8Response.Length(), BytesSent);
-	}
-
-	uint8 Delimiter = 0;
-	InClientSocket->Send(&Delimiter, 1, BytesSent);
+	SendResponse(InClientSocket, Response);
 }
