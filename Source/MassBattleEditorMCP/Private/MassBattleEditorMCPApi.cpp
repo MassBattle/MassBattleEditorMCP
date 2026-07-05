@@ -23,6 +23,9 @@
 #include "Dom/JsonObject.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/Texture2D.h"
+#include "MaterialEditingLibrary.h"
+#include "Materials/MaterialInstanceConstant.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -87,6 +90,128 @@ static bool SaveLoadedAsset(UObject* Asset, FString& OutError)
 		return false;
 	}
 	return true;
+}
+
+static void SetMaterialTextureParameterForAllAssociations(UMaterialInstanceConstant* MaterialInstance, const FName TextureParameterName, UTexture2D* Texture)
+{
+	if (!MaterialInstance || !Texture)
+	{
+		return;
+	}
+
+	UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(MaterialInstance, TextureParameterName, Texture);
+	UMaterialEditingLibrary::SetMaterialInstanceTextureParameterValue(MaterialInstance, TextureParameterName, Texture, EMaterialParameterAssociation::LayerParameter);
+}
+
+static void SetMaterialStaticSwitchForAllAssociations(UMaterialInstanceConstant* MaterialInstance, const FName SwitchParameterName, const bool bValue)
+{
+	if (!MaterialInstance || SwitchParameterName.IsNone())
+	{
+		return;
+	}
+
+	UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MaterialInstance, SwitchParameterName, bValue);
+	UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MaterialInstance, SwitchParameterName, bValue, EMaterialParameterAssociation::LayerParameter);
+}
+
+static const FOriginalTextures* ResolveOriginalTextureSetForStaticMaterial(const FStaticMaterial& StaticMaterial, const int32 SlotIndex, const TArray<FOriginalTextures>& OriginalTexturesArray)
+{
+	if (OriginalTexturesArray.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	const FString SlotName = StaticMaterial.MaterialSlotName.ToString();
+	FString BaseNamePart;
+	FString IndexPart;
+	if (SlotName.Split(TEXT("__"), &BaseNamePart, &IndexPart, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+	{
+		const int32 TextureIndex = FCString::Atoi(*IndexPart);
+		if (OriginalTexturesArray.IsValidIndex(TextureIndex))
+		{
+			return &OriginalTexturesArray[TextureIndex];
+		}
+	}
+
+	for (const FOriginalTextures& TextureSet : OriginalTexturesArray)
+	{
+		if (!TextureSet.SlotName.IsEmpty() && SlotName.StartsWith(TextureSet.SlotName, ESearchCase::IgnoreCase))
+		{
+			return &TextureSet;
+		}
+	}
+
+	if (OriginalTexturesArray.Num() == 1)
+	{
+		return &OriginalTexturesArray[0];
+	}
+
+	if (OriginalTexturesArray.IsValidIndex(SlotIndex))
+	{
+		return &OriginalTexturesArray[SlotIndex];
+	}
+
+	return nullptr;
+}
+
+static int32 ApplyOriginalTexturesToGeneratedVatMaterials(UStaticMesh* StaticMesh, const TArray<FOriginalTextures>& OriginalTexturesArray)
+{
+	if (!StaticMesh || OriginalTexturesArray.IsEmpty())
+	{
+		return 0;
+	}
+
+	int32 UpdatedMaterialCount = 0;
+	const TArray<FStaticMaterial>& StaticMaterials = StaticMesh->GetStaticMaterials();
+	for (int32 SlotIndex = 0; SlotIndex < StaticMaterials.Num(); ++SlotIndex)
+	{
+		const FStaticMaterial& StaticMaterial = StaticMaterials[SlotIndex];
+		UMaterialInstanceConstant* MaterialInstance = Cast<UMaterialInstanceConstant>(StaticMaterial.MaterialInterface);
+		const FOriginalTextures* TextureSet = ResolveOriginalTextureSetForStaticMaterial(StaticMaterial, SlotIndex, OriginalTexturesArray);
+		if (!MaterialInstance || !TextureSet)
+		{
+			continue;
+		}
+
+		bool bUpdated = false;
+		auto ApplyTextureParam = [&](const FName TextureParameterName, const FName SwitchParameterName, UTexture2D* Texture)
+		{
+			if (!Texture)
+			{
+				return;
+			}
+
+			SetMaterialTextureParameterForAllAssociations(MaterialInstance, TextureParameterName, Texture);
+			SetMaterialStaticSwitchForAllAssociations(MaterialInstance, SwitchParameterName, true);
+			bUpdated = true;
+		};
+
+		ApplyTextureParam(TEXT("AOTex"), TEXT("UseAOTex"), TextureSet->AO.Get());
+		ApplyTextureParam(TEXT("ARMTex"), TEXT("UseARMTex"), TextureSet->ARM.Get());
+		ApplyTextureParam(TEXT("BaseColorTex"), TEXT("UseColorTex"), TextureSet->BaseColor.Get());
+		ApplyTextureParam(TEXT("SpecularTex"), TEXT("UseSpecularTex"), TextureSet->Specular.Get());
+		ApplyTextureParam(TEXT("EmissiveTex"), TEXT("UseEmissiveTex"), TextureSet->Emissive.Get());
+		ApplyTextureParam(TEXT("NormalTex"), TEXT("UseNormalTex"), TextureSet->Normal.Get());
+		ApplyTextureParam(TEXT("OpacityTex"), TEXT("UseOpacityTex"), TextureSet->Opacity.Get());
+		ApplyTextureParam(TEXT("RoughnessTex"), TEXT("UseRoughnessTex"), TextureSet->Roughness.Get());
+		ApplyTextureParam(TEXT("MetallicTex"), TEXT("UseMetallicTex"), TextureSet->Metallic.Get());
+
+		if (bUpdated)
+		{
+			UMaterialEditingLibrary::UpdateMaterialInstance(MaterialInstance);
+			MaterialInstance->PostEditChange();
+			MaterialInstance->MarkPackageDirty();
+			++UpdatedMaterialCount;
+		}
+	}
+
+	if (UpdatedMaterialCount > 0)
+	{
+		StaticMesh->PostEditChange();
+		StaticMesh->MarkPackageDirty();
+	}
+
+	return UpdatedMaterialCount;
 }
 
 static void ApplyMassBattleStaticMeshSlotLayout(UStaticMesh* OutStaticMesh, USkeletalMesh* SkeletalMesh, int32 LightmapIndex, bool bGenerateLightmapUVs)
@@ -796,7 +921,16 @@ FString UMassBattleEditorMCPApi::MCP_CreateMaterialInstanceForStaticMeshWithLODs
 	/// 调用原始函数
 	UMassBattleFuncLibEd::CreateMaterialInstanceForStaticMeshWithLODs(InStaticMesh, PackagePath, AssetName, ParentMaterial, OriginalTexturesArray);
 
-	return MakeSuccessJson();
+	const int32 MaterialTextureOverrideCount = ApplyOriginalTexturesToGeneratedVatMaterials(InStaticMesh, OriginalTexturesArray);
+
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetBoolField(TEXT("success"), true);
+	Root->SetNumberField(TEXT("material_texture_override_count"), MaterialTextureOverrideCount);
+
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+	return OutputString;
 }
 
 FString UMassBattleEditorMCPApi::MCP_FindAndFillOriginalTextures(const FString& SkeletalMeshPath, const FString& SearchPath, const FString& AssetName)
