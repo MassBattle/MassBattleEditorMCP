@@ -21,10 +21,13 @@
 #include "Renderers/MassBattleAgentRenderer.h"
 #include "StaticMeshAttributes.h"
 #include "Dom/JsonObject.h"
+#include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UObject/SavePackage.h"
 
 DEFINE_LOG_CATEGORY(LogMassBattleEditorMCPApi);
 
@@ -55,6 +58,37 @@ FString UMassBattleEditorMCPApi::MakeSuccessJson()
 
 namespace
 {
+static FString ObjectPathOrEmpty(const UObject* Object)
+{
+	return Object ? Object->GetPathName() : FString();
+}
+
+static bool SaveLoadedAsset(UObject* Asset, FString& OutError)
+{
+	if (!Asset)
+	{
+		OutError = TEXT("Asset is null");
+		return false;
+	}
+
+	UPackage* Package = Asset->GetOutermost();
+	if (!Package)
+	{
+		OutError = TEXT("Asset has no package");
+		return false;
+	}
+
+	const FString PackageFileName = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
+	FSavePackageArgs SaveArgs;
+	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+	if (!UPackage::SavePackage(Package, Asset, *PackageFileName, SaveArgs))
+	{
+		OutError = FString::Printf(TEXT("Failed to save package: %s"), *PackageFileName);
+		return false;
+	}
+	return true;
+}
+
 static void ApplyMassBattleStaticMeshSlotLayout(UStaticMesh* OutStaticMesh, USkeletalMesh* SkeletalMesh, int32 LightmapIndex, bool bGenerateLightmapUVs)
 {
 	if (!OutStaticMesh || !SkeletalMesh)
@@ -581,7 +615,7 @@ FString UMassBattleEditorMCPApi::MCP_DuplicateClassAsset(const FString& SourceCl
 	return OutputString;
 }
 
-FString UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(const FString& TargetClassPath, const FString& AgentMeshPath, const FString& NiagaraSystemPath, int32 SubType)
+FString UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(const FString& TargetClassPath, const FString& AgentMeshPath, const FString& NiagaraSystemPath, int32 SubType, bool bSaveAssets)
 {
 	/// 加载目标蓝图类
 	UClass* TargetClass = LoadObject<UClass>(nullptr, *TargetClassPath);
@@ -627,7 +661,46 @@ FString UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(const FString& Ta
 	/// 调用原始函数
 	UMassBattleFuncLibEd::SetClassDefaultProperties(World, TargetClass, AgentMesh, NiagaraSystem, SubType);
 
-	return MakeSuccessJson();
+	AMassBattleAgentRenderer* CDO = TargetClass->GetDefaultObject<AMassBattleAgentRenderer>();
+	UObject* SaveTarget = TargetClass;
+	FString BlueprintPath;
+	if (const UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(TargetClass))
+	{
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(BPClass->ClassGeneratedBy))
+		{
+			SaveTarget = Blueprint;
+			BlueprintPath = Blueprint->GetPathName();
+		}
+	}
+
+	bool bSaved = false;
+	FString SaveError;
+	if (bSaveAssets)
+	{
+		if (SaveLoadedAsset(SaveTarget, SaveError))
+		{
+			bSaved = true;
+		}
+		else
+		{
+			return MakeErrorJson(SaveError);
+		}
+	}
+
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetBoolField(TEXT("success"), true);
+	Root->SetStringField(TEXT("target_class"), TargetClass->GetPathName());
+	Root->SetStringField(TEXT("blueprint_path"), BlueprintPath);
+	Root->SetStringField(TEXT("agent_mesh"), CDO ? ObjectPathOrEmpty(CDO->AgentMesh) : FString());
+	Root->SetStringField(TEXT("niagara_system"), CDO ? ObjectPathOrEmpty(CDO->NiagaraSystemAsset) : FString());
+	Root->SetNumberField(TEXT("subtype"), CDO ? CDO->SubType.Index : SubType);
+	Root->SetBoolField(TEXT("save_assets"), bSaveAssets);
+	Root->SetBoolField(TEXT("saved"), bSaved);
+
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+	return OutputString;
 }
 
 FString UMassBattleEditorMCPApi::MCP_ConvertSkeletalMeshToStaticMeshWithLODs(const FString& SkeletalMeshPath, const FString& OutputPackagePath, const FString& OutputAssetName, int32 LightmapIndex, bool bGenerateLightmapUVs)
@@ -1168,7 +1241,7 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 
 	AddTool(TEXT("MCP_SetClassDefaultProperties"),
 		TEXT("设置 MassBattleAgentRenderer 蓝图类的默认属性"),
-		TEXT("TargetClassPath, AgentMeshPath, NiagaraSystemPath, SubType"));
+		TEXT("TargetClassPath, AgentMeshPath, NiagaraSystemPath, SubType, bSaveAssets"));
 
 	AddTool(TEXT("MCP_ConvertSkeletalMeshToStaticMeshWithLODs"),
 		TEXT("将 SkeletalMesh 转换为带 LOD 的 StaticMesh"),
@@ -1313,7 +1386,7 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("effect_asset.query"));
 
 	AddTool(TEXT("MCP_EffectAssetReadSummary"),
-		TEXT("读取未知特效资产摘要；Cascade 会展开 Emitter/LOD/Module 结构"),
+		TEXT("读取未知特效资产摘要；包含依赖、引用和缺失项目依赖警告"),
 		TEXT("AssetPath, OptionsJson"),
 		TEXT("effect_asset.read"));
 
@@ -1323,7 +1396,7 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("effect_asset.text"));
 
 	AddTool(TEXT("MCP_EffectAssetSoftDelete"),
-		TEXT("检查引用后把未引用特效相关资产软移动到 _Trash；默认 dry_run"),
+		TEXT("检查引用后规划软移动到 _Trash；默认阻止运行态危险移动，需 allow_unsafe_asset_move=true 才执行"),
 		TEXT("AssetPath, OptionsJson"),
 		TEXT("effect_asset.lifecycle"));
 

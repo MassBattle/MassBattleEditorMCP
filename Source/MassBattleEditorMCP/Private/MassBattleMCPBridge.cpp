@@ -276,7 +276,7 @@ FString UMassBattleMCPBridge::InternalExecuteCommand(const FString& CommandType,
 	if (CommandType == TEXT("MCP_NiagaraDelete")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraDelete(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("DeleteJson")), BoolParam(Params, TEXT("bSaveAssets"))); }
 
 	if (CommandType == TEXT("MCP_DuplicateClassAsset")) { return UMassBattleEditorMCPApi::MCP_DuplicateClassAsset(StringParam(Params, TEXT("SourceClassPath")), StringParam(Params, TEXT("NewClassName")), StringParam(Params, TEXT("PackagePath"))); }
-	if (CommandType == TEXT("MCP_SetClassDefaultProperties")) { return UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(StringParam(Params, TEXT("TargetClassPath")), StringParam(Params, TEXT("AgentMeshPath")), StringParam(Params, TEXT("NiagaraSystemPath")), IntParam(Params, TEXT("SubType"))); }
+	if (CommandType == TEXT("MCP_SetClassDefaultProperties")) { return UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(StringParam(Params, TEXT("TargetClassPath")), StringParam(Params, TEXT("AgentMeshPath")), StringParam(Params, TEXT("NiagaraSystemPath")), IntParam(Params, TEXT("SubType")), BoolParam(Params, TEXT("bSaveAssets"))); }
 
 	return ErrorJson(FString::Printf(TEXT("Unknown MassBattle MCP command: %s"), *CommandType));
 }

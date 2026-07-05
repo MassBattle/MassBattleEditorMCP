@@ -101,9 +101,9 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | Available | Plan moving one unit and linked generated assets into the style layout. |
 | Unit Editor MCP | `editor_apply_organize_unit_assets` | Available | Apply a reviewed unit asset organization plan; dry-run by default. |
 | Effect Asset MCP | `effect_asset_query` | Available | Query visual assets such as Niagara, Cascade, Blueprint, Material, Texture, and Sound by `query/root/classes/limit`. |
-| Effect Asset MCP | `effect_asset_read_summary` | Available | Read summaries for unknown effect asset types; Cascade returns emitter, LOD, module, and dependency details. |
+| Effect Asset MCP | `effect_asset_read_summary` | Available | Read summaries for unknown effect asset types; returns dependency, referencer, and missing project dependency details. |
 | Effect Asset MCP | `effect_asset_export_text` | Available | Export deterministic text for close AI reading and review. |
-| Effect Asset MCP | `effect_asset_soft_delete` | Available | Read references, then move unreferenced assets to `_Trash`; dry-run by default. |
+| Effect Asset MCP | `effect_asset_soft_delete` | Available | Plan a move of unreferenced assets to `_Trash`; live moves are blocked unless explicitly forced. |
 | Effect Asset MCP | `effect_duplicate_asset` | Available | Additively duplicate assets without deleting or overwriting the source. |
 | Niagara MCP | `niagara_query` | Available | Query Niagara Systems by path or name. |
 | Niagara MCP | `niagara_read_summary` | Available | Read Niagara system, emitter, renderer, user parameter, and module summaries. |

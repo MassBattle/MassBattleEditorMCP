@@ -4994,7 +4994,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	if (!RendererClassPath.IsEmpty() && MassBattleUnitEditorMCP::AssetExists(RendererClassPath))
 	{
 		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("set_renderer_defaults"), TEXT("MCP_SetClassDefaultProperties"), TEXT("running"), TEXT("Setting renderer CDO mesh, Niagara system, and SubType."));
-		const FString DefaultsResult = UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(RendererClassPath, StaticMeshPath, NiagaraSystemPath, SubType);
+		const FString DefaultsResult = UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(RendererClassPath, StaticMeshPath, NiagaraSystemPath, SubType, bSaveAssets);
 		MassBattleUnitEditorMCP::SetStepResult(Step, DefaultsResult);
 		TSharedPtr<FJsonObject> DefaultsJson = MassBattleUnitEditorMCP::ParseObject(DefaultsResult);
 		if (!DefaultsJson.IsValid() || !DefaultsJson->GetBoolField(TEXT("success")))

@@ -101,9 +101,9 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | 可用 | 计划把一个单位和关联生成资产移动到风格化目录。 |
 | Unit Editor MCP | `editor_apply_organize_unit_assets` | 可用 | 应用已审核的单位资产整理计划；默认可 dry-run。 |
 | Effect Asset MCP | `effect_asset_query` | 可用 | 按 `query/root/classes/limit` 查找 Niagara、Cascade、Blueprint、Material、Texture、Sound 等视觉相关资产。 |
-| Effect Asset MCP | `effect_asset_read_summary` | 可用 | 读取未知类型特效资产摘要；Cascade 会返回 emitter、LOD、module 和依赖。 |
+| Effect Asset MCP | `effect_asset_read_summary` | 可用 | 读取未知类型特效资产摘要；返回依赖、引用和缺失项目依赖信息。 |
 | Effect Asset MCP | `effect_asset_export_text` | 可用 | 导出确定性文本，供 AI 精读和复核。 |
-| Effect Asset MCP | `effect_asset_soft_delete` | 可用 | 读取引用后把未引用资产软移动到 `_Trash`；默认 dry-run。 |
+| Effect Asset MCP | `effect_asset_soft_delete` | 可用 | 规划把未引用资产软移动到 `_Trash`；运行态移动默认阻止，需显式 force。 |
 | Effect Asset MCP | `effect_duplicate_asset` | 可用 | 加法复制资产，不删除或覆盖源资产。 |
 | Niagara MCP | `niagara_query` | 可用 | 按路径或名称查找 Niagara System。 |
 | Niagara MCP | `niagara_read_summary` | 可用 | 读取 Niagara system、emitter、renderer、user parameter、module 摘要。 |

@@ -14,6 +14,16 @@ Use UE editor APIs, commandlets, or the MassBattleEditorMCP tools. Do not edit `
 3. Apply edits through `MCP_UnitPlanMergeUpdate` then `MCP_UnitApplyPlan`; omitted fields must remain unchanged. Use `MCP_UnitDelete` for planned deletes.
 4. For array fields such as `Attack.SpawnProjectile`, `Attack.SpawnFx`, and `Attack.PlaySound`, union merge can append missing elements by default. Pass `append_arrays=false` only when append should be rejected.
 
+## Organize Or Clean Up Assets
+
+Treat MCP as the asset-registry hand, not as judgement. Build the relationship graph before deleting or moving anything.
+
+1. Start from the unit with `MCP_UnitGet`, then inspect its linked renderer and generated assets with `MCP_EffectAssetReadSummary(include_dependencies=true, include_referencers=true)`.
+2. Treat `missing_hard_dependencies` and `missing_soft_dependencies` as blockers. Repair or replace references before cleanup.
+3. Use `MCP_EditorPlanOrganizeUnitAssets` for linked generated/source assets because it follows the Asset Registry from the unit. Review `moves`, `blocked_count`, and referencers before any apply.
+4. `MCP_EffectAssetSoftDelete` is a review tool by default. It blocks live asset moves unless `allow_unsafe_asset_move=true` is explicitly supplied after referencers and editor state are reviewed.
+5. Keep one canonical generated asset set per playable unit. Old generated folders, tests, and marketplace source folders are duplicates until their referencers prove otherwise.
+
 ## Create Unit
 
 1. If the user says they selected assets in the editor, or asks for "current/selected -> generate", prefer `MCP_EditorPlanCreateVatUnitFromSelection` then `MCP_EditorApplyCreateVatUnitFromSelection`. These tools infer `skeletal_mesh`, target/template unit, selected animations, materials, VAT data asset, Niagara, and renderer template from current selection or an explicit `selected_assets` list.
@@ -100,7 +110,7 @@ Example:
 
 Known validated examples in Winyunq:
 
-- City flag: `/Game/Unit/Actor/Building/City/MCPGenerated/Gen_MCP_CityFlag_CN/AgentConfig_MCP_CityFlag_CN.AgentConfig_MCP_CityFlag_CN`
+- City flag: `/Game/Unit/Actor/Building/City/AgentConfigCity.AgentConfigCity`
 - China infantry: `/Game/Unit/Actor/Army/Soldier/China/MCPGenerated/Gen_MCP_ChinaInfantry_A/AgentConfig_MCP_ChinaInfantry_A.AgentConfig_MCP_ChinaInfantry_A`
 - China officer: `/Game/Unit/Actor/Army/Officer/China/MCPGenerated/Gen_MCP_ChinaOfficer_A/AgentConfig_MCP_ChinaOfficer_A.AgentConfig_MCP_ChinaOfficer_A`
 

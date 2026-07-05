@@ -278,6 +278,39 @@ static void AddDependencyArrays(UObject* Object, TSharedPtr<FJsonObject>& Root, 
 
 	Root->SetArrayField(TEXT("hard_dependencies"), NamesToJson(Dependencies));
 	Root->SetArrayField(TEXT("soft_dependencies"), NamesToJson(SoftDependencies));
+
+	auto MissingProjectPackagesToJson = [&Registry, Limit](const TArray<FName>& Names) -> TArray<TSharedPtr<FJsonValue>>
+	{
+		TArray<TSharedPtr<FJsonValue>> Array;
+		for (const FName& Name : Names)
+		{
+			if (Array.Num() >= Limit)
+			{
+				break;
+			}
+
+			const FString PackagePath = Name.ToString();
+			if (!PackagePath.StartsWith(TEXT("/Game/")))
+			{
+				continue;
+			}
+
+			TArray<FAssetData> Assets;
+			Registry.GetAssetsByPackageName(Name, Assets, true);
+			if (Assets.IsEmpty())
+			{
+				Array.Add(MakeShared<FJsonValueString>(PackagePath));
+			}
+		}
+		return Array;
+	};
+
+	TArray<TSharedPtr<FJsonValue>> MissingHardDependencies = MissingProjectPackagesToJson(Dependencies);
+	TArray<TSharedPtr<FJsonValue>> MissingSoftDependencies = MissingProjectPackagesToJson(SoftDependencies);
+	Root->SetArrayField(TEXT("missing_hard_dependencies"), MissingHardDependencies);
+	Root->SetArrayField(TEXT("missing_soft_dependencies"), MissingSoftDependencies);
+	Root->SetNumberField(TEXT("missing_hard_dependency_count"), MissingHardDependencies.Num());
+	Root->SetNumberField(TEXT("missing_soft_dependency_count"), MissingSoftDependencies.Num());
 }
 
 static void AddReferencerArrays(UObject* Object, TSharedPtr<FJsonObject>& Root, int32 Limit)
@@ -579,9 +612,9 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetGetApiStatus()
 	};
 
 	Tools.Add(Tool(TEXT("MCP_EffectAssetQuery"), TEXT("effect_asset.query"), TEXT("Query visual effect-related assets across unknown Marketplace asset types."), TEXT("QueryJson")));
-	Tools.Add(Tool(TEXT("MCP_EffectAssetReadSummary"), TEXT("effect_asset.read"), TEXT("Read a typed summary for Niagara, Cascade, material, Blueprint, or generic assets."), TEXT("AssetPath, OptionsJson")));
+	Tools.Add(Tool(TEXT("MCP_EffectAssetReadSummary"), TEXT("effect_asset.read"), TEXT("Read a typed summary for Niagara, Cascade, material, Blueprint, or generic assets, including missing project dependency warnings."), TEXT("AssetPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectAssetExportText"), TEXT("effect_asset.text"), TEXT("Write a deterministic text dump for close reading."), TEXT("AssetPath, OptionsJson")));
-	Tools.Add(Tool(TEXT("MCP_EffectAssetSoftDelete"), TEXT("effect_asset.lifecycle"), TEXT("Move an unreferenced generic asset to trash; dry_run=true by default."), TEXT("AssetPath, OptionsJson")));
+	Tools.Add(Tool(TEXT("MCP_EffectAssetSoftDelete"), TEXT("effect_asset.lifecycle"), TEXT("Plan moving an unreferenced generic asset to trash; apply is blocked by default unless allow_unsafe_asset_move=true is supplied."), TEXT("AssetPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectDuplicateAsset"), TEXT("effect_asset.write"), TEXT("Duplicate an arbitrary asset into a package path."), TEXT("SourceAssetPath, NewAssetName, PackagePath, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_BatchFxReadRendererDefaults"), TEXT("batch_fx.read"), TEXT("Read AMassBattleFxRenderer Blueprint CDO defaults used by newly placed actors."), TEXT("TargetClassPath")));
 	Tools.Add(Tool(TEXT("MCP_BatchFxSetRendererDefaults"), TEXT("batch_fx.write"), TEXT("Set AMassBattleFxRenderer Blueprint CDO defaults: Niagara, NDC_BurstFx, SubType, batch size, and pooling cooldown."), TEXT("TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets")));
@@ -765,9 +798,12 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetSoftDelete(const FString& A
 
 	bool bDryRun = true;
 	bool bAllowReferenced = false;
+	bool bAllowUnsafeAssetMove = false;
 	Options->TryGetBoolField(TEXT("dry_run"), bDryRun);
 	Options->TryGetBoolField(TEXT("preview_only"), bDryRun);
 	Options->TryGetBoolField(TEXT("allow_referenced"), bAllowReferenced);
+	Options->TryGetBoolField(TEXT("allow_unsafe_asset_move"), bAllowUnsafeAssetMove);
+	Options->TryGetBoolField(TEXT("force"), bAllowUnsafeAssetMove);
 
 	TSharedPtr<FJsonObject> Root = MakeSuccessObject();
 	Root->SetBoolField(TEXT("dry_run"), bDryRun);
@@ -785,10 +821,15 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetSoftDelete(const FString& A
 		Root->SetStringField(TEXT("blocked_reason"), TEXT("Asset has referencers; replace references or pass allow_referenced=true before moving."));
 	}
 
-	FString TrashRoot = TEXT("/Game/_Trash/MassBattle/Assets");
-	Options->TryGetStringField(TEXT("trash_root"), TrashRoot);
-	const FString DateFolder = FDateTime::UtcNow().ToString(TEXT("%Y-%m-%d"));
-	const FString TrashPackagePath = TrashRoot / DateFolder;
+	FString TrashPackagePath;
+	Options->TryGetStringField(TEXT("trash_package_path"), TrashPackagePath);
+	if (TrashPackagePath.TrimStartAndEnd().IsEmpty())
+	{
+		FString TrashRoot = TEXT("/Game/_Trash/MassBattle/Assets");
+		Options->TryGetStringField(TEXT("trash_root"), TrashRoot);
+		const FString DateFolder = FDateTime::UtcNow().ToString(TEXT("%Y-%m-%d"));
+		TrashPackagePath = TrashRoot / DateFolder;
+	}
 	const FString TrashAssetName = Object->GetName();
 	const FString TrashPath = TrashPackagePath / TrashAssetName + TEXT(".") + TrashAssetName;
 	Root->SetStringField(TEXT("trash_path"), TrashPath);
@@ -796,6 +837,15 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetSoftDelete(const FString& A
 	if (bDryRun || bBlocked)
 	{
 		Root->SetBoolField(TEXT("moved"), false);
+		return ToJsonString(Root);
+	}
+
+	if (!bAllowUnsafeAssetMove)
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetBoolField(TEXT("moved"), false);
+		Root->SetBoolField(TEXT("applicable"), false);
+		Root->SetStringField(TEXT("blocked_reason"), TEXT("AssetTools.RenameAssets can crash active MassEntity editor sessions; rerun in a safe editor state or pass allow_unsafe_asset_move=true after reviewing referencers."));
 		return ToJsonString(Root);
 	}
 

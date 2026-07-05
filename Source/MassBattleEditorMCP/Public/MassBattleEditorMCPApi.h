@@ -46,11 +46,13 @@ public:
 	 * @param       参数名称: NiagaraSystemPath              数据类型:        const FString&
 	 *              说明: NiagaraSystem 资产路径 (可为空)
 	 * @param       参数名称: SubType                        数据类型:        int32
+	 * @param       参数名称: bSaveAssets                    数据类型:        bool
+	 *              说明: 是否保存被修改的 Blueprint 资产
 	 *
-	 * @return      JSON 字符串: {"success": bool, "error": "..."}
+	 * @return      JSON 字符串: {"success": bool, "agent_mesh": "...", "saved": bool, "error": "..."}
 	 **/
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP")
-	static FString MCP_SetClassDefaultProperties(const FString& TargetClassPath, const FString& AgentMeshPath, const FString& NiagaraSystemPath, int32 SubType);
+	static FString MCP_SetClassDefaultProperties(const FString& TargetClassPath, const FString& AgentMeshPath, const FString& NiagaraSystemPath, int32 SubType, bool bSaveAssets = false);
 
 	// ==================== 网格转换 ====================
 

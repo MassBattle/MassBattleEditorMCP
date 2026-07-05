@@ -41,9 +41,9 @@ Use these Niagara MCP tools when available:
 Use these generic effect-asset and MassBattle batch-FX MCP tools when available:
 
 - `MCP_EffectAssetQuery(QueryJson)`: find unknown Marketplace visual assets by path/name/class. Use this before assuming Niagara.
-- `MCP_EffectAssetReadSummary(AssetPath, OptionsJson)`: read typed summaries for Niagara, Cascade `UParticleSystem`, material, Blueprint, or generic assets. Cascade summaries expose emitters, LODs, and modules.
+- `MCP_EffectAssetReadSummary(AssetPath, OptionsJson)`: read typed summaries for Niagara, Cascade `UParticleSystem`, material, Blueprint, or generic assets. Summaries include hard/soft dependencies, referencers when requested, and missing project dependency warnings.
 - `MCP_EffectAssetExportText(AssetPath, OptionsJson)`: export a deterministic text dump for close reading.
-- `MCP_EffectAssetSoftDelete(AssetPath, OptionsJson)`: move unreferenced assets to trash. Default to dry-run and inspect referencers first.
+- `MCP_EffectAssetSoftDelete(AssetPath, OptionsJson)`: plan moving unreferenced assets to trash. Default to dry-run; live asset moves are blocked unless `allow_unsafe_asset_move=true` is explicitly supplied after referencers and editor state are reviewed.
 - `MCP_EffectDuplicateAsset(SourceAssetPath, NewAssetName, PackagePath, bSaveAssets)`: duplicate reference/template assets. This is additive and does not delete or rewrite the source.
 - `MCP_BatchFxReadRendererDefaults(TargetClassPath)`: read `AMassBattleFxRenderer` Blueprint CDO defaults inherited by newly placed actors.
 - `MCP_BatchFxSetRendererDefaults(TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets)`: configure an `AMassBattleFxRenderer` Blueprint CDO for a batched FX subtype. This does not place the actor in a level.
