@@ -94,8 +94,8 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Unit Editor MCP | `editor_get_status` | Available | Read unit editor workflow capabilities. |
 | Unit Editor MCP | `editor_list_profiles` | Available | List style profiles and authoring recipes. |
 | Unit Editor MCP | `editor_get_profile` | Available | Read one profile or recipe. |
-| Unit Editor MCP | `editor_plan_create_vat_unit` | Diagnostic | Preview the DoAll-equivalent VAT unit spec with style defaults, source-material texture inheritance, animation fallback, and warnings. |
-| Unit Editor MCP | `editor_apply_create_vat_unit` | Available | Primary non-selection DoAll-equivalent generation entry, including mesh conversion, VAT material creation, VAT bake, renderer duplication, and unit config creation or merge. |
+| Unit Editor MCP | `editor_plan_create_vat_unit` | Diagnostic | Preview the DoAll-equivalent VAT unit plan; strict apply still requires complete canonical inputs. |
+| Unit Editor MCP | `editor_apply_create_vat_unit` | Available | Primary non-selection DoAll-equivalent generation entry; validates complete canonical inputs before mesh conversion, VAT material creation, VAT bake, renderer duplication, and unit config writes. |
 | Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | Diagnostic | Infer a DoAll spec from current editor selection or `selected_assets`, then return a reviewable plan. |
 | Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | Available | Primary one-click "current selection -> generate" entry point for AI-driven unit creation. |
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | Available | Plan moving one unit and linked generated assets into the style layout. |
@@ -118,7 +118,9 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 
 The batch FX loop is: read or duplicate reference effect assets, prepare batched Niagara/NDC/Renderer Blueprints, let MCP write and verify renderer Blueprint defaults, have the user place the renderer actor in a test level, then use Unit MCP to write `FFxConfig` into arrays such as `Hit.SpawnFx`, `Death.SpawnFx`, and `Attack.SpawnFx`. MCP does not automatically modify the current level layout. As long as the user does not override instance parameters in the level, newly placed actors should inherit asset defaults.
 
-VAT unit creation first uses discovered original textures. If filename-based discovery misses a source material texture, the editor MCP inherits common texture parameters and used textures from the source skeletal material before creating the VAT material instance. This keeps incomplete AI commands runnable while returning `defaulted_original_textures_from_source_material` warnings for review.
+VAT unit creation first uses discovered original textures. If filename-based discovery misses a source material texture, the editor MCP can inherit common texture parameters and used textures from the source skeletal material before creating the VAT material instance. Treat `defaulted_original_textures_from_source_material` warnings as review items and verify the generated material dependencies.
+
+Strict non-selection VAT create requires canonical complete inputs: `skeletal_mesh`, `unit_name`, `target_package_path`, `parent_material`, `source_renderer_class`, `niagara_system`, `vat_sample_rate`, and `animations`. Existing-unit refresh uses `target_unit`; new-unit creation also requires `template_unit`, `target_unit_package_path`, and `subtype`. Existing generated StaticMeshes block the run unless `overwrite_existing=true` is supplied, so refreshes cannot silently reuse stale mesh/material assets.
 
 MassBattleTools DoAll correspondence for VAT units:
 
@@ -128,7 +130,7 @@ MassBattleTools DoAll correspondence for VAT units:
 4. `CreateDataAsset` writes `Visualize`, `LODShared`, `AnimShared`, and runtime sample-rate defaults to the unit config.
 5. `CreateRenderer` duplicates or updates the renderer Blueprint defaults.
 
-The plan and validate calls expose these steps for review. They should not be required for a normal AI command.
+The apply call runs validation before writing assets. The plan and validate calls expose these steps for review, but a normal AI command should still provide the complete spec up front.
 
 ## Default Style And Template-Based Workflow
 

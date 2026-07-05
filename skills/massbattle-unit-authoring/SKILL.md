@@ -28,11 +28,11 @@ Treat MCP as the asset-registry hand, not as judgement. Build the relationship g
 
 Mirror the official `/MassBattle/Core/MassBattleTools` editor widget. Normal AI authoring should use one DoAll-equivalent apply call, not manually sequence internal stages.
 
-1. If the user selected assets in the editor, or asks for "current/selected -> generate", call `MCP_EditorApplyCreateVatUnitFromSelection` directly. It infers `skeletal_mesh`, target/template unit, selected animations, materials, VAT data asset, Niagara, and renderer template from current selection or explicit `selected_assets`.
-2. Otherwise call `MCP_EditorApplyCreateVatUnit` directly with the smallest useful spec. It resolves style defaults for package layout, template unit, VAT parent material, renderer template, Niagara system, 24 Hz VAT sampling, and animation search roots.
+1. If the user selected assets in the editor, or asks for "current/selected -> generate", call `MCP_EditorApplyCreateVatUnitFromSelection` directly. It infers `skeletal_mesh`, target/template unit, selected animations, materials, VAT data asset, Niagara, and renderer template from current selection or explicit `selected_assets`; if anything required cannot be inferred, validation blocks the write.
+2. Otherwise call `MCP_EditorApplyCreateVatUnit` directly with a complete canonical spec. Do not rely on defaults, aliases, automatic animation fallback, or static fallback.
 3. Use `MCP_EditorPlanCreateVatUnit`, `MCP_EditorValidateCreateVatUnit`, or `MCP_EditorPlanCreateVatUnitFromSelection` only as diagnostics after an apply warning/failure, or when the user explicitly asks for a dry-run plan.
-4. Inspect `warnings` from the apply result. Defaulted fields are allowed, but warnings are work items for exact art or behavior.
-5. When animation names are nonstandard, pass an explicit `animations` category map. The editor MCP can fall back to same-skeleton AnimSequences, but it will warn because the state mapping is guessed.
+4. Inspect `validation.issues` and `execution_steps` from the apply result. Any `error` means no assets were modified.
+5. Always pass an explicit `animations` category map when using the non-selection entry. Nonstandard names are not guessed in strict create.
 6. Read back the generated unit with `MCP_UnitGet` and verify asset existence, renderer class, material slot, attack enabled state, projectile/effect arrays, range, damage, and subtype.
 7. For VAT materials, expect filename discovery first and source-material texture inheritance as a fallback. Treat `defaulted_original_textures_from_source_material` warnings as review items: verify the resulting material depends on the intended BaseColor/Normal/ARM textures with `MCP_EffectAssetReadSummary`.
 8. VAT create specs use `unit_name`, `target_package_path`, and `target_unit_package_path` as the canonical output naming fields. Do not use older field names for these concepts.
@@ -47,18 +47,17 @@ Official DoAll correspondence:
 - `CreateDataAsset` -> merge `Visualize`, `LODShared`, `AnimShared`, and runtime animation sample-rate defaults into the target unit.
 - `CreateRenderer` -> duplicate/update the renderer Blueprint defaults for mesh, Niagara system, and subtype.
 
-## Default-Tolerant Create
+## Strict Create
 
-The editor MCP should still create a runnable unit when an AI command is incomplete, as long as a skeletal mesh is provided and referenced assets can load.
+The editor MCP must reject incomplete VAT unit creation instead of generating partial assets.
 
-- Missing `template_unit`: use the style family default from `authoring_defaults.default_unit_templates`; otherwise use `authoring_defaults.default_unit_template`.
-- Missing `parent_material`: use `/MassBattle/Core/AgentRenderer/VAT/M_VATMaster.M_VATMaster`.
-- Missing `source_renderer_class`: use `/MassBattle/Core/AgentRenderer/BP_AgentRenderer_Template.BP_AgentRenderer_Template_C`.
-- Missing `niagara_system`: use `/MassBattle/Core/AgentRenderer/NS_AgentRenderer_Template.NS_AgentRenderer_Template`.
-- Missing `animation_name_filter`: use an empty filter and scan same-skeleton AnimSequences under `animation_search_path`.
-- Missing or incomplete original texture discovery: inherit common texture parameters and used textures from the source skeletal material, return `defaulted_original_textures_from_source_material`, and let the AI verify material dependencies.
-- If automatic animation categorization is empty, accept compatible AnimSequences as a fallback and return a warning asking the AI to provide explicit `animations`.
-- If no animation can be found, default apply may continue as a static fallback and return `warning_static_fallback`; set `allow_static_fallback=false` when an animated VAT bake is mandatory.
+- Required canonical fields for non-selection create: `skeletal_mesh`, `unit_name`, `target_package_path`, `parent_material`, `source_renderer_class`, `niagara_system`, `vat_sample_rate`, and `animations`.
+- To patch an existing unit, pass `target_unit`; the tool reads `target_unit.SubType.Index` unless an explicit `subtype` is supplied.
+- To create a new unit, pass `template_unit`, `target_unit_package_path`, and `subtype`.
+- Use `overwrite_existing=true` and `refresh_materials=true` when refreshing generated assets. Existing generated StaticMeshes block strict create when overwrite is false.
+- Do not pass old aliases such as `unit_path`, `existing_unit`, `mesh`, `source_mesh`, `sub_type`, `renderer_template_class`, `template_renderer_class`, `niagara`, `sample_rate`, or `VATSampleRate`.
+- Do not pass fallback switches such as `allow_static_fallback`, `allow_missing_anims`, `allow_no_vat`, or `allow_missing_renderer`.
+- `MCP_EditorApplyCreateVatUnit` runs `MCP_EditorValidateCreateVatUnit` before any asset write. Validation failure means no mesh, material, VAT texture, renderer, or unit data is modified.
 - Selection-based tools accept `selected_assets` to simulate current editor selection in scripted runs. Select a unit plus a mesh to patch that unit; pass `selected_unit_role="template"` when the selected unit should be cloned instead.
 
 ## Defaults

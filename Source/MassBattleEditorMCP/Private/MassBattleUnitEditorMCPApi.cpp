@@ -452,7 +452,12 @@ static bool AssetExists(const FString& ObjectPath)
 	}
 
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	return AssetRegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(AssetPath)).IsValid();
+	if (AssetRegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(AssetPath)).IsValid())
+	{
+		return true;
+	}
+
+	return FSoftObjectPath(AssetPath).TryLoad() != nullptr;
 }
 
 static bool SaveAssetByPath(const FString& ObjectPath, FString& OutError)
@@ -1957,7 +1962,6 @@ static TSharedPtr<FJsonObject> MakeCompactCreateVatApplySummary(const TSharedPtr
 	CopyBoolField(ApplyJson, Summary, TEXT("success"));
 	CopyBoolField(ApplyJson, Summary, TEXT("dry_run"));
 	CopyBoolField(ApplyJson, Summary, TEXT("save_assets"));
-	CopyBoolField(ApplyJson, Summary, TEXT("static_fallback_used"));
 	CopyStringField(ApplyJson, Summary, TEXT("error"));
 
 	const TSharedPtr<FJsonObject>* Plan = nullptr;
@@ -2452,6 +2456,238 @@ static bool HasAnyField(const TSharedPtr<FJsonObject>& Object, const TArray<FStr
 	return false;
 }
 
+static bool HasCanonicalStringField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName)
+{
+	FString Value;
+	return Object.IsValid() && Object->TryGetStringField(FieldName, Value) && !Value.IsEmpty();
+}
+
+static bool HasCanonicalNumberField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName)
+{
+	double Value = 0.0;
+	return Object.IsValid() && Object->TryGetNumberField(FieldName, Value);
+}
+
+static void AddStrictRequiredStringIssue(
+	const TSharedPtr<FJsonObject>& Spec,
+	TArray<TSharedPtr<FJsonValue>>& Issues,
+	const FString& FieldName,
+	const TArray<FString>& RejectedAliases)
+{
+	bool bRejectedAliasFound = false;
+	for (const FString& Alias : RejectedAliases)
+	{
+		if (HasCanonicalStringField(Spec, Alias))
+		{
+			AddIssue(Issues, TEXT("error"), TEXT("non_canonical_field"), FString::Printf(TEXT("%s is not accepted here. Use canonical field %s."), *Alias, *FieldName), FieldName);
+			bRejectedAliasFound = true;
+		}
+	}
+
+	if (HasCanonicalStringField(Spec, FieldName) || bRejectedAliasFound)
+	{
+		return;
+	}
+
+	AddIssue(Issues, TEXT("error"), TEXT("missing_required_field"), FString::Printf(TEXT("%s is required for strict DoAll VAT unit creation."), *FieldName), FieldName);
+}
+
+static void AddStrictRequiredStringIssue(
+	const TSharedPtr<FJsonObject>& Spec,
+	TArray<TSharedPtr<FJsonValue>>& Issues,
+	const FString& FieldName)
+{
+	static const TArray<FString> EmptyAliases;
+	AddStrictRequiredStringIssue(Spec, Issues, FieldName, EmptyAliases);
+}
+
+static void AddStrictRequiredNumberIssue(
+	const TSharedPtr<FJsonObject>& Spec,
+	TArray<TSharedPtr<FJsonValue>>& Issues,
+	const FString& FieldName,
+	const TArray<FString>& RejectedAliases)
+{
+	bool bRejectedAliasFound = false;
+	for (const FString& Alias : RejectedAliases)
+	{
+		if (HasCanonicalNumberField(Spec, Alias))
+		{
+			AddIssue(Issues, TEXT("error"), TEXT("non_canonical_field"), FString::Printf(TEXT("%s is not accepted here. Use canonical field %s."), *Alias, *FieldName), FieldName);
+			bRejectedAliasFound = true;
+		}
+	}
+
+	if (HasCanonicalNumberField(Spec, FieldName) || bRejectedAliasFound)
+	{
+		return;
+	}
+
+	AddIssue(Issues, TEXT("error"), TEXT("missing_required_field"), FString::Printf(TEXT("%s is required for strict DoAll VAT unit creation."), *FieldName), FieldName);
+}
+
+static void AddStrictAnimationAssetIssues(const TSharedPtr<FJsonObject>& Spec, TArray<TSharedPtr<FJsonValue>>& Issues)
+{
+	const TSharedPtr<FJsonObject>* Animations = nullptr;
+	if (!Spec.IsValid() || !Spec->TryGetObjectField(TEXT("animations"), Animations) || !Animations || !Animations->IsValid())
+	{
+		return;
+	}
+
+	FString SkeletalMeshPath;
+	Spec->TryGetStringField(TEXT("skeletal_mesh"), SkeletalMeshPath);
+	USkeleton* ExpectedSkeleton = nullptr;
+	if (!SkeletalMeshPath.IsEmpty())
+	{
+		if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(FSoftObjectPath(EnsureObjectPath(SkeletalMeshPath)).TryLoad()))
+		{
+			ExpectedSkeleton = SkeletalMesh->GetSkeleton();
+		}
+	}
+
+	int32 ValidAnimationCount = 0;
+	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Animations)->Values)
+	{
+		if (!Pair.Value.IsValid() || Pair.Value->Type != EJson::Array)
+		{
+			AddIssue(Issues, TEXT("error"), TEXT("animation_category_not_array"), FString::Printf(TEXT("animations.%s must be an array of AnimSequence object paths."), *Pair.Key), TEXT("animations"));
+			continue;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>& Values = Pair.Value->AsArray();
+		for (int32 Index = 0; Index < Values.Num(); ++Index)
+		{
+			FString AnimPath;
+			if (!Values[Index].IsValid() || !Values[Index]->TryGetString(AnimPath) || AnimPath.IsEmpty())
+			{
+				AddIssue(Issues, TEXT("error"), TEXT("animation_path_invalid"), FString::Printf(TEXT("animations.%s[%d] must be a non-empty AnimSequence object path."), *Pair.Key, Index), TEXT("animations"));
+				continue;
+			}
+
+			UAnimSequence* AnimSequence = Cast<UAnimSequence>(FSoftObjectPath(EnsureObjectPath(AnimPath)).TryLoad());
+			if (!AnimSequence)
+			{
+				AddIssue(Issues, TEXT("error"), TEXT("animation_not_found_or_not_sequence"), FString::Printf(TEXT("animations.%s[%d] is not a loadable AnimSequence: %s"), *Pair.Key, Index, *AnimPath), TEXT("animations"));
+				continue;
+			}
+			if (ExpectedSkeleton && AnimSequence->GetSkeleton() != ExpectedSkeleton)
+			{
+				AddIssue(Issues, TEXT("error"), TEXT("animation_skeleton_mismatch"), FString::Printf(TEXT("animations.%s[%d] does not use the skeletal_mesh skeleton: %s"), *Pair.Key, Index, *AnimPath), TEXT("animations"));
+				continue;
+			}
+			++ValidAnimationCount;
+		}
+	}
+
+	if (ValidAnimationCount <= 0)
+	{
+		AddIssue(Issues, TEXT("error"), TEXT("no_valid_animation_sequences"), TEXT("animations must contain at least one loadable AnimSequence matching skeletal_mesh."), TEXT("animations"));
+	}
+}
+
+static void AddStrictCreateVatSpecIssues(const TSharedPtr<FJsonObject>& Spec, TArray<TSharedPtr<FJsonValue>>& Issues)
+{
+	AddStrictRequiredStringIssue(Spec, Issues, TEXT("skeletal_mesh"), TArray<FString>{ TEXT("mesh"), TEXT("source_mesh") });
+	AddStrictRequiredStringIssue(Spec, Issues, TEXT("unit_name"));
+	AddStrictRequiredStringIssue(Spec, Issues, TEXT("target_package_path"));
+	AddStrictRequiredStringIssue(Spec, Issues, TEXT("parent_material"));
+	AddStrictRequiredStringIssue(Spec, Issues, TEXT("source_renderer_class"), TArray<FString>{ TEXT("renderer_template_class"), TEXT("template_renderer_class") });
+	AddStrictRequiredStringIssue(Spec, Issues, TEXT("niagara_system"), TArray<FString>{ TEXT("niagara"), TEXT("niagara_system_asset") });
+	AddStrictRequiredNumberIssue(Spec, Issues, TEXT("vat_sample_rate"), TArray<FString>{ TEXT("sample_rate"), TEXT("VATSampleRate") });
+
+	const bool bHasTargetUnit = HasCanonicalStringField(Spec, TEXT("target_unit"));
+	if (!bHasTargetUnit)
+	{
+		AddStrictRequiredStringIssue(Spec, Issues, TEXT("template_unit"), TArray<FString>{ TEXT("source_unit") });
+		AddStrictRequiredStringIssue(Spec, Issues, TEXT("target_unit_package_path"));
+		if (HasCanonicalNumberField(Spec, TEXT("sub_type")))
+		{
+			AddIssue(Issues, TEXT("error"), TEXT("non_canonical_field"), TEXT("sub_type is not accepted here. Use canonical field subtype."), TEXT("subtype"));
+		}
+		if (!HasCanonicalNumberField(Spec, TEXT("subtype")))
+		{
+			AddIssue(Issues, TEXT("error"), TEXT("missing_required_field"), TEXT("subtype is required when target_unit is not supplied."), TEXT("subtype"));
+		}
+	}
+	else
+	{
+		for (const FString& Alias : TArray<FString>{ TEXT("unit_path"), TEXT("existing_unit") })
+		{
+			if (HasCanonicalStringField(Spec, Alias))
+			{
+				AddIssue(Issues, TEXT("error"), TEXT("non_canonical_field"), FString::Printf(TEXT("%s is not accepted here. Use canonical field target_unit."), *Alias), TEXT("target_unit"));
+			}
+		}
+	}
+
+	const TSharedPtr<FJsonObject>* Animations = nullptr;
+	const bool bHasAnimations = Spec.IsValid()
+		&& Spec->TryGetObjectField(TEXT("animations"), Animations)
+		&& Animations
+		&& Animations->IsValid()
+		&& CountJsonObjectArrayItems(*Animations) > 0;
+	if (HasAnyField(Spec, TArray<FString>{ TEXT("found_anims"), TEXT("found_animations"), TEXT("anim_sequences") }))
+	{
+		AddIssue(Issues, TEXT("error"), TEXT("non_canonical_field"), TEXT("Use canonical field animations for strict DoAll VAT unit creation."), TEXT("animations"));
+	}
+	if (!bHasAnimations)
+	{
+		AddIssue(Issues, TEXT("error"), TEXT("missing_required_field"), TEXT("animations is required and must contain at least one AnimSequence mapping."), TEXT("animations"));
+	}
+
+	if (Spec.IsValid() && Spec->HasField(TEXT("allow_static_fallback")))
+	{
+		AddIssue(Issues, TEXT("error"), TEXT("fallback_field_removed"), TEXT("allow_static_fallback is not accepted for strict DoAll VAT unit creation."), TEXT("allow_static_fallback"));
+	}
+	for (const FString& DisabledField : TArray<FString>{ TEXT("allow_missing_anims"), TEXT("allow_no_vat"), TEXT("allow_missing_renderer") })
+	{
+		if (Spec.IsValid() && Spec->HasField(DisabledField))
+		{
+			AddIssue(Issues, TEXT("error"), TEXT("fallback_field_removed"), FString::Printf(TEXT("%s is not accepted for strict DoAll VAT unit creation."), *DisabledField), DisabledField);
+		}
+	}
+	for (const FString& BakeField : TArray<FString>{ TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") })
+	{
+		bool bEnabled = true;
+		if (Spec.IsValid() && Spec->TryGetBoolField(BakeField, bEnabled) && !bEnabled)
+		{
+			AddIssue(Issues, TEXT("error"), TEXT("vat_bake_required"), FString::Printf(TEXT("%s=false is disabled for strict DoAll VAT unit creation."), *BakeField), BakeField);
+		}
+	}
+	AddStrictAnimationAssetIssues(Spec, Issues);
+}
+
+static bool ResolveCreateVatSubType(const TSharedPtr<FJsonObject>& Spec, int32& OutSubType, FString& OutSource, FString& OutError)
+{
+	double SubTypeNumber = 0.0;
+	if (Spec.IsValid() && Spec->TryGetNumberField(TEXT("subtype"), SubTypeNumber))
+	{
+		OutSubType = static_cast<int32>(SubTypeNumber);
+		OutSource = TEXT("spec.subtype");
+		return true;
+	}
+
+	FString TargetUnitPath;
+	if (Spec.IsValid())
+	{
+		Spec->TryGetStringField(TEXT("target_unit"), TargetUnitPath);
+	}
+	if (!TargetUnitPath.IsEmpty())
+	{
+		UMassBattleAgentConfigDataAsset* Unit = Cast<UMassBattleAgentConfigDataAsset>(FSoftObjectPath(EnsureObjectPath(TargetUnitPath)).TryLoad());
+		if (!Unit)
+		{
+			OutError = FString::Printf(TEXT("target_unit could not be loaded for subtype resolution: %s"), *TargetUnitPath);
+			return false;
+		}
+		OutSubType = Unit->SubType.Index;
+		OutSource = TEXT("target_unit.SubType.Index");
+		return true;
+	}
+
+	OutError = TEXT("subtype is required when target_unit is not supplied.");
+	return false;
+}
+
 static FString GeneratedClassPathFromSelectedObject(UObject* Object)
 {
 	if (UBlueprint* Blueprint = Cast<UBlueprint>(Object))
@@ -2809,7 +3045,7 @@ static TSharedPtr<FJsonObject> BuildResolvedCreateVatUnitSpecFromSelection(const
 				}
 				else
 				{
-					AddIssue(Warnings, TEXT("warning"), TEXT("no_animation_mapping_from_selection_or_roots"), TEXT("No selected or discoverable compatible animations were mapped. The create workflow may use static fallback unless animations are supplied."), TEXT("animations"));
+					AddIssue(Warnings, TEXT("warning"), TEXT("no_animation_mapping_from_selection_or_roots"), TEXT("No selected or discoverable compatible animations were mapped. Strict create validation will block the write until animations are supplied."), TEXT("animations"));
 				}
 			}
 			else
@@ -4532,6 +4768,13 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	}
 
 	TSharedPtr<FJsonObject> GeneratedData = MakeShared<FJsonObject>();
+	double ExplicitSubTypeNumber = 0.0;
+	if (Spec->TryGetNumberField(TEXT("subtype"), ExplicitSubTypeNumber))
+	{
+		TSharedPtr<FJsonObject> SubType = MakeShared<FJsonObject>();
+		SubType->SetNumberField(TEXT("Index"), static_cast<int32>(ExplicitSubTypeNumber));
+		GeneratedData->SetObjectField(TEXT("SubType"), SubType);
+	}
 
 	if (!SkeletalMeshPath.IsEmpty())
 	{
@@ -4551,7 +4794,16 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 			MassBattleUnitEditorMCP::AddStep(Steps, TEXT("find_textures"), TEXT("MCP_FindAndFillOriginalTextures"), TEXT("blocked"), TEXT("texture_search_path is missing."));
 		}
 
-		if (!AnimationSearchPath.IsEmpty())
+		const TSharedPtr<FJsonObject>* ExplicitAnimations = nullptr;
+		if (Spec->TryGetObjectField(TEXT("animations"), ExplicitAnimations) && ExplicitAnimations && ExplicitAnimations->IsValid() && MassBattleUnitEditorMCP::CountJsonObjectArrayItems(*ExplicitAnimations) > 0)
+		{
+			TSharedPtr<FJsonObject> AnimJson = MassBattleUnitEditorMCP::MakeSuccess();
+			AnimJson->SetObjectField(TEXT("anims"), *ExplicitAnimations);
+			AnimJson->SetStringField(TEXT("source"), TEXT("spec.animations"));
+			Discovery->SetObjectField(TEXT("animations"), AnimJson);
+			MassBattleUnitEditorMCP::AddStep(Steps, TEXT("find_animations"), TEXT("spec.animations"), TEXT("done"), TEXT("Explicit animation mapping was supplied; automatic discovery was skipped."));
+		}
+		else if (!AnimationSearchPath.IsEmpty())
 		{
 			const FString AnimResult = UMassBattleEditorMCPApi::MCP_FindAndFillAnimSequences(SkeletalMeshPath, AnimationSearchPath, AnimationNameFilter);
 			TSharedPtr<FJsonObject> AnimJson = MassBattleUnitEditorMCP::ParseObject(AnimResult);
@@ -4739,6 +4991,19 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("SpecJson is not valid JSON"));
 	}
 
+	TArray<TSharedPtr<FJsonValue>> Issues;
+	TArray<TSharedPtr<FJsonValue>> ExecutionPreview;
+	MassBattleUnitEditorMCP::AddStrictCreateVatSpecIssues(Spec, Issues);
+	if (MassBattleUnitEditorMCP::HasErrorIssue(Issues))
+	{
+		TSharedPtr<FJsonObject> Root = MassBattleUnitEditorMCP::MakeSuccess();
+		Root->SetStringField(TEXT("validation_type"), TEXT("create_vat_unit"));
+		Root->SetBoolField(TEXT("valid"), false);
+		Root->SetArrayField(TEXT("issues"), Issues);
+		Root->SetArrayField(TEXT("execution_preview"), ExecutionPreview);
+		return MassBattleUnitEditorMCP::ToJsonString(Root);
+	}
+
 	const FString PlanResult = MCP_EditorPlanCreateVatUnit(SpecJson);
 	TSharedPtr<FJsonObject> Plan = MassBattleUnitEditorMCP::ParseObject(PlanResult);
 	if (!Plan.IsValid())
@@ -4746,8 +5011,6 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("MCP_EditorPlanCreateVatUnit returned invalid JSON"));
 	}
 
-	TArray<TSharedPtr<FJsonValue>> Issues;
-	TArray<TSharedPtr<FJsonValue>> ExecutionPreview;
 	bool bPlanSuccess = false;
 	Plan->TryGetBoolField(TEXT("success"), bPlanSuccess);
 	if (!bPlanSuccess)
@@ -4844,8 +5107,8 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 		}
 		else
 		{
-			MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("info"), TEXT("static_mesh_will_skip"), FString::Printf(TEXT("StaticMesh exists and will be reused: %s"), *StaticMeshPath));
-			MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("convert_mesh"), TEXT("skipped_existing"), StaticMeshPath);
+			MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("generated_static_mesh_exists"), FString::Printf(TEXT("StaticMesh already exists and strict create requires overwrite_existing=true for a full refresh: %s"), *StaticMeshPath), TEXT("overwrite_existing"));
+			MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("convert_mesh"), TEXT("blocked"), TEXT("StaticMesh exists; overwrite_existing=true is required."));
 		}
 	}
 	else
@@ -4855,7 +5118,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 
 	if (ParentMaterialPath.IsEmpty())
 	{
-		MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("warning"), TEXT("missing_parent_material"), TEXT("parent_material is missing; material instance creation will be skipped."), TEXT("parent_material"));
+		MassBattleUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("missing_parent_material"), TEXT("parent_material is missing; material instance creation cannot be skipped in strict create."), TEXT("parent_material"));
 		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("create_materials"), TEXT("blocked"), TEXT("parent_material is required to create material instances."));
 	}
 	else if (!MassBattleUnitEditorMCP::AssetExists(ParentMaterialPath))
@@ -5055,26 +5318,42 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		return MassBattleUnitEditorMCP::MakeErrorJson(TEXT("SpecJson is not valid JSON"));
 	}
 
+	bool bDryRun = false;
+	Spec->TryGetBoolField(TEXT("dry_run"), bDryRun);
+	Spec->TryGetBoolField(TEXT("preview_only"), bDryRun);
+	const bool bCompactResponse = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("compact_response") }, false);
+	TArray<TSharedPtr<FJsonValue>> ExecutionSteps;
+
+	TSharedPtr<FJsonObject> Root = MassBattleUnitEditorMCP::MakeSuccess();
+	Root->SetStringField(TEXT("editor_workflow"), TEXT("MassBattleTools DoAll VAT skeletal unit authoring apply"));
+	Root->SetBoolField(TEXT("dry_run"), bDryRun);
+	Root->SetBoolField(TEXT("save_assets"), bSaveAssets);
+	Root->SetBoolField(TEXT("compact_response"), bCompactResponse);
+
+	TArray<TSharedPtr<FJsonValue>> PreflightIssues;
+	MassBattleUnitEditorMCP::AddStrictCreateVatSpecIssues(Spec, PreflightIssues);
+	if (MassBattleUnitEditorMCP::HasErrorIssue(PreflightIssues))
+	{
+		TSharedPtr<FJsonObject> Validation = MassBattleUnitEditorMCP::MakeSuccess();
+		Validation->SetStringField(TEXT("validation_type"), TEXT("create_vat_unit"));
+		Validation->SetBoolField(TEXT("valid"), false);
+		Validation->SetArrayField(TEXT("issues"), PreflightIssues);
+		Validation->SetArrayField(TEXT("execution_preview"), TArray<TSharedPtr<FJsonValue>>());
+		Root->SetObjectField(TEXT("validation"), Validation);
+		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("validate_create_vat_unit"), TEXT("MCP_EditorApplyCreateVatUnit.strict_preflight"), TEXT("blocked"), TEXT("Strict validation failed before planning; no assets were modified."));
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+		return MassBattleUnitEditorMCP::ToJsonString(Root);
+	}
+
 	const FString PlanResult = MCP_EditorPlanCreateVatUnit(SpecJson);
 	TSharedPtr<FJsonObject> Plan = MassBattleUnitEditorMCP::ParseObject(PlanResult);
 	if (!Plan.IsValid() || !Plan->GetBoolField(TEXT("success")))
 	{
 		return PlanResult;
 	}
-
-	bool bDryRun = false;
-	Spec->TryGetBoolField(TEXT("dry_run"), bDryRun);
-	Spec->TryGetBoolField(TEXT("preview_only"), bDryRun);
-
-	TSharedPtr<FJsonObject> Root = MassBattleUnitEditorMCP::MakeSuccess();
-	Root->SetStringField(TEXT("editor_workflow"), TEXT("MassBattleTools DoAll VAT skeletal unit authoring apply"));
-	Root->SetBoolField(TEXT("dry_run"), bDryRun);
-	Root->SetBoolField(TEXT("save_assets"), bSaveAssets);
 	Root->SetObjectField(TEXT("plan"), Plan);
-	const bool bCompactResponse = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("compact_response") }, false);
-	Root->SetBoolField(TEXT("compact_response"), bCompactResponse);
 
-	TArray<TSharedPtr<FJsonValue>> ExecutionSteps;
 	if (bDryRun)
 	{
 		const FString ValidationResult = MCP_EditorValidateCreateVatUnit(SpecJson);
@@ -5089,6 +5368,22 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 			}
 		}
 		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("dry_run"), TEXT("MCP_EditorValidateCreateVatUnit"), TEXT("skipped"), TEXT("dry_run=true; no assets were modified."));
+		Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+		return MassBattleUnitEditorMCP::ToJsonString(Root);
+	}
+
+	const FString ValidationResult = MCP_EditorValidateCreateVatUnit(SpecJson);
+	TSharedPtr<FJsonObject> Validation = MassBattleUnitEditorMCP::ParseObject(ValidationResult);
+	bool bValidationValid = false;
+	if (Validation.IsValid())
+	{
+		Validation->TryGetBoolField(TEXT("valid"), bValidationValid);
+		Root->SetObjectField(TEXT("validation"), Validation);
+	}
+	if (!Validation.IsValid() || !bValidationValid)
+	{
+		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("validate_create_vat_unit"), TEXT("MCP_EditorValidateCreateVatUnit"), TEXT("blocked"), Validation.IsValid() ? TEXT("Strict validation failed; no assets were modified.") : TEXT("Validation returned invalid JSON; no assets were modified."));
+		Root->SetBoolField(TEXT("success"), false);
 		Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
 		return MassBattleUnitEditorMCP::ToJsonString(Root);
 	}
@@ -5147,7 +5442,10 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	}
 	else if (!bOverwriteExisting && MassBattleUnitEditorMCP::AssetExists(StaticMeshPath))
 	{
-		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("convert_mesh"), TEXT("MCP_ConvertSkeletalMeshToStaticMeshWithLODs"), TEXT("skipped_existing"), TEXT("StaticMesh already exists and overwrite_existing=false."));
+		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("convert_mesh"), TEXT("MCP_ConvertSkeletalMeshToStaticMeshWithLODs"), TEXT("blocked"), TEXT("StaticMesh already exists; strict create requires overwrite_existing=true."));
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+		return MassBattleUnitEditorMCP::ToJsonString(Root);
 	}
 	else
 	{
@@ -5241,7 +5539,6 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	}
 
 	const bool bBakeVat = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") }, true);
-	const bool bAllowStaticFallback = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("allow_static_fallback"), TEXT("allow_missing_anims"), TEXT("allow_no_vat") }, true);
 	bool bVatBakeCompleted = false;
 	if (bBakeVat)
 	{
@@ -5250,24 +5547,10 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		Step->SetObjectField(TEXT("result"), BakeResult);
 		if (!BakeResult.IsValid() || !BakeResult->GetBoolField(TEXT("success")))
 		{
-			FString BakeError;
-			if (BakeResult.IsValid())
-			{
-				BakeResult->TryGetStringField(TEXT("error"), BakeError);
-			}
-			if (bAllowStaticFallback && BakeError.Contains(TEXT("No animation sequences"), ESearchCase::IgnoreCase))
-			{
-				Step->SetStringField(TEXT("status"), TEXT("warning_static_fallback"));
-				Step->SetStringField(TEXT("warning"), TEXT("No animation sequences were available; continuing unit creation without refreshed VAT animation data. Provide animations or animation_search_path to complete animated VAT output."));
-				Root->SetBoolField(TEXT("static_fallback_used"), true);
-			}
-			else
-			{
-				Step->SetStringField(TEXT("status"), TEXT("failed"));
-				Root->SetBoolField(TEXT("success"), false);
-				Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
-				return MassBattleUnitEditorMCP::ToJsonString(Root);
-			}
+			Step->SetStringField(TEXT("status"), TEXT("failed"));
+			Root->SetBoolField(TEXT("success"), false);
+			Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+			return MassBattleUnitEditorMCP::ToJsonString(Root);
 		}
 		else
 		{
@@ -5323,14 +5606,20 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		MassBattleUnitEditorMCP::TryGetObjectPathSpec(Spec, { TEXT("niagara_system"), TEXT("niagara"), TEXT("niagara_system_asset") }, NiagaraSystemPath);
 	}
 	int32 SubType = 0;
-	double SubTypeNumber = 0.0;
-	if (Spec->TryGetNumberField(TEXT("subtype"), SubTypeNumber) || Spec->TryGetNumberField(TEXT("sub_type"), SubTypeNumber))
+	FString SubTypeSource;
+	FString SubTypeError;
+	if (!MassBattleUnitEditorMCP::ResolveCreateVatSubType(Spec, SubType, SubTypeSource, SubTypeError))
 	{
-		SubType = static_cast<int32>(SubTypeNumber);
+		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("resolve_subtype"), TEXT("MCP_EditorApplyCreateVatUnit.subtype"), TEXT("blocked"), SubTypeError);
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+		return MassBattleUnitEditorMCP::ToJsonString(Root);
 	}
 	if (!RendererClassPath.IsEmpty() && MassBattleUnitEditorMCP::AssetExists(RendererClassPath))
 	{
 		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("set_renderer_defaults"), TEXT("MCP_SetClassDefaultProperties"), TEXT("running"), TEXT("Setting renderer CDO mesh, Niagara system, and SubType."));
+		Step->SetNumberField(TEXT("subtype"), SubType);
+		Step->SetStringField(TEXT("subtype_source"), SubTypeSource);
 		const FString DefaultsResult = UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(RendererClassPath, StaticMeshPath, NiagaraSystemPath, SubType, bSaveAssets);
 		MassBattleUnitEditorMCP::SetStepResult(Step, DefaultsResult);
 		TSharedPtr<FJsonObject> DefaultsJson = MassBattleUnitEditorMCP::ParseObject(DefaultsResult);
@@ -5346,14 +5635,9 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	else
 	{
 		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("set_renderer_defaults"), TEXT("MCP_SetClassDefaultProperties"), TEXT("blocked"), TEXT("Renderer class is missing."));
-		bool bAllowMissingRenderer = false;
-		Spec->TryGetBoolField(TEXT("allow_missing_renderer"), bAllowMissingRenderer);
-		if (!bAllowMissingRenderer)
-		{
-			Root->SetBoolField(TEXT("success"), false);
-			Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
-			return MassBattleUnitEditorMCP::ToJsonString(Root);
-		}
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
+		return MassBattleUnitEditorMCP::ToJsonString(Root);
 	}
 
 	FString TargetUnitPath;
@@ -5868,9 +6152,9 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorGetStatus()
 	Tools.Add(Tool(TEXT("MCP_EditorPlanAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Use MassBattleEditor functions to plan an AnimShared update for an existing unit.")));
 	Tools.Add(Tool(TEXT("MCP_EditorValidateAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Validate whether an animation-set edit can produce an applicable unit merge plan.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyAddAnimationsToUnit"), TEXT("unit_editor.animation"), TEXT("Plan and apply an AnimShared update for an existing unit.")));
-	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnit"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: preview the MassBattleTools DoAll-equivalent VAT unit spec with resolved defaults and warnings.")));
+	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnit"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: preview the MassBattleTools DoAll-equivalent VAT unit plan. Strict apply still requires canonical complete inputs.")));
 	Tools.Add(Tool(TEXT("MCP_EditorValidateCreateVatUnit"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: validate DoAll-equivalent VAT unit inputs without writing assets.")));
-	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Primary non-selection DoAll-equivalent VAT unit authoring entry; defaults missing fields and returns warnings.")));
+	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Primary non-selection DoAll-equivalent VAT unit authoring entry. Requires canonical complete inputs and validates before writing assets.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: infer the DoAll spec from current selection or selected_assets and return it for review.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Primary one-click current selection -> generate entry matching the MassBattleTools DoAll workflow.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Plan moving a unit and its editor-generated linked assets into the selected style layout.")));

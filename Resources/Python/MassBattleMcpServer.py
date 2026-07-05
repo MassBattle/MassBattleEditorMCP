@@ -224,7 +224,7 @@ async def editor_get_profile(profile_type: str, profile_id: str) -> Dict[str, An
 
 @mcp.tool()
 async def editor_plan_create_vat_unit(spec: Any) -> Dict[str, Any]:
-    """Diagnostic: preview the MassBattleTools DoAll-equivalent VAT unit spec with resolved defaults and warnings."""
+    """Diagnostic: preview the MassBattleTools DoAll-equivalent VAT unit plan; strict apply still requires complete canonical inputs."""
     return await get_connection().send_command("MCP_EditorPlanCreateVatUnit", {"SpecJson": _json_arg(spec)})
 
 
@@ -240,7 +240,7 @@ async def editor_apply_create_vat_unit(
     save_assets: bool = True,
     compact_response: bool = True,
 ) -> Dict[str, Any]:
-    """Primary non-selection DoAll-equivalent VAT unit authoring entry; defaults missing fields and returns warnings."""
+    """Primary non-selection DoAll-equivalent VAT unit authoring entry; requires canonical complete inputs and validates before writing assets."""
     return await get_connection().send_command(
         "MCP_EditorApplyCreateVatUnit",
         {"SpecJson": _json_arg_with_defaults(spec, {"compact_response": compact_response}), "bSaveAssets": save_assets},

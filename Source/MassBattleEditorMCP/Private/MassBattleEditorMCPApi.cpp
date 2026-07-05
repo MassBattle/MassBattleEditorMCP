@@ -1605,7 +1605,7 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("unit_editor.animation"));
 
 	AddTool(TEXT("MCP_EditorPlanCreateVatUnit"),
-		TEXT("诊断入口：预览与 MassBattleTools DoAll 等价的 VAT 单位生成 spec、默认补全和 warnings"),
+		TEXT("诊断入口：预览与 MassBattleTools DoAll 等价的 VAT 单位生成计划；严格执行仍要求完整 canonical 输入"),
 		TEXT("SpecJson"),
 		TEXT("unit_editor.create.diagnostic"));
 
@@ -1615,7 +1615,7 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("unit_editor.create.diagnostic"));
 
 	AddTool(TEXT("MCP_EditorApplyCreateVatUnit"),
-		TEXT("主入口：执行非 selection 的 MassBattleTools DoAll 等价 VAT 单位生成，自动补缺省并返回 warnings"),
+		TEXT("主入口：执行非 selection 的 MassBattleTools DoAll 等价 VAT 单位生成；要求完整 canonical 输入并在写资产前验证"),
 		TEXT("SpecJson, bSaveAssets"),
 		TEXT("unit_editor.create"));
 
