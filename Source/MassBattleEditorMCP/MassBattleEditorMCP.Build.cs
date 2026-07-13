@@ -22,6 +22,7 @@ public class MassBattleEditorMCP : ModuleRules
 				"Core",
 				"MassCore",
 				"MassEntity",
+				"MassAPI",
 				"MassBattle",
 				"MassBattleEditor"
 			}
@@ -32,6 +33,7 @@ public class MassBattleEditorMCP : ModuleRules
 			{
 				"CoreUObject",
 				"Engine",
+				"InputCore",
 				"Slate",
 				"SlateCore",
 				"UnrealEd",

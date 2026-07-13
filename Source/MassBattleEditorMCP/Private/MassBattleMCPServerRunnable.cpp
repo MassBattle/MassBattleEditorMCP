@@ -28,6 +28,10 @@ namespace
 				TotalSent += BytesSent;
 				continue;
 			}
+			if (!bSent)
+			{
+				return false;
+			}
 
 			if (FDateTime::UtcNow() > Deadline)
 			{
@@ -120,7 +124,10 @@ void FMassBattleMCPServerRunnable::HandleClientConnection(FSocket* InClientSocke
 		return;
 	}
 
-	InClientSocket->SetNonBlocking(true);
+	// Accepted sockets can report a zero-byte non-blocking read before the client's first
+	// payload arrives on Windows. Wait for readability and then use blocking reads so a
+	// valid MCP request is not mistaken for an orderly disconnect.
+	InClientSocket->SetNonBlocking(false);
 
 	const int32 MaxBufferSize = 4096;
 	uint8 Buffer[MaxBufferSize];
@@ -129,6 +136,13 @@ void FMassBattleMCPServerRunnable::HandleClientConnection(FSocket* InClientSocke
 
 	while (bRunning && InClientSocket)
 	{
+		const FTimespan Remaining = Deadline - FDateTime::UtcNow();
+		if (Remaining <= FTimespan::Zero()
+			|| !InClientSocket->Wait(ESocketWaitConditions::WaitForRead, Remaining))
+		{
+			break;
+		}
+
 		int32 BytesRead = 0;
 		const bool bReadSuccess = InClientSocket->Recv(Buffer, MaxBufferSize, BytesRead, ESocketReceiveFlags::None);
 
@@ -153,19 +167,11 @@ void FMassBattleMCPServerRunnable::HandleClientConnection(FSocket* InClientSocke
 		}
 		else if (!bReadSuccess)
 		{
-			if (FDateTime::UtcNow() > Deadline)
-			{
-				break;
-			}
-			FPlatformProcess::Sleep(0.001f);
+			break;
 		}
 		else if (BytesRead == 0)
 		{
 			break;
-		}
-		else
-		{
-			FPlatformProcess::Sleep(0.001f);
 		}
 	}
 }
