@@ -2,6 +2,7 @@
 #include "MassBattleEditorMCPCommandlet.h"
 
 #include "Dom/JsonObject.h"
+#include "MassBattleProjectileMCPApi.h"
 #include "MassBattleUnitEditorMCPApi.h"
 #include "MassBattleUnitMCPApi.h"
 #include "Misc/FileHelper.h"
@@ -168,6 +169,54 @@ FString CommandletDispatchInvocation(const TSharedPtr<FJsonObject>& Invocation)
 		Params->TryGetStringField(TEXT("UnitPath"), UnitPath);
 		Params->TryGetStringField(TEXT("unit_path"), UnitPath);
 		return UMassBattleUnitMCPApi::MCP_UnitGet(UnitPath, CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_ProjectileGetApiStatus") || Command == TEXT("projectile_get_api_status"))
+	{
+		return UMassBattleProjectileMCPApi::MCP_ProjectileGetApiStatus();
+	}
+	if (Command == TEXT("MCP_ProjectileList") || Command == TEXT("projectile_list"))
+	{
+		return UMassBattleProjectileMCPApi::MCP_ProjectileList(CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_ProjectileQuery") || Command == TEXT("projectile_query"))
+	{
+		return UMassBattleProjectileMCPApi::MCP_ProjectileQuery(CommandletJsonFieldByNamesAsString(Params, { TEXT("QueryJson"), TEXT("query") }));
+	}
+	if (Command == TEXT("MCP_ProjectileGet") || Command == TEXT("projectile_get"))
+	{
+		FString ProjectilePath;
+		Params->TryGetStringField(TEXT("ProjectilePath"), ProjectilePath);
+		Params->TryGetStringField(TEXT("projectile_path"), ProjectilePath);
+		return UMassBattleProjectileMCPApi::MCP_ProjectileGet(ProjectilePath, CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_ProjectileGetSchema") || Command == TEXT("projectile_get_schema"))
+	{
+		return UMassBattleProjectileMCPApi::MCP_ProjectileGetSchema(CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_ProjectileCreate") || Command == TEXT("projectile_create"))
+	{
+		return UMassBattleProjectileMCPApi::MCP_ProjectileCreate(CommandletJsonFieldByNamesAsString(Params, { TEXT("CreateSpecJson"), TEXT("create_spec") }), bSaveAssets);
+	}
+	if (Command == TEXT("MCP_ProjectileWrite") || Command == TEXT("projectile_write"))
+	{
+		FString ProjectilePath;
+		Params->TryGetStringField(TEXT("ProjectilePath"), ProjectilePath);
+		Params->TryGetStringField(TEXT("projectile_path"), ProjectilePath);
+		return UMassBattleProjectileMCPApi::MCP_ProjectileWrite(ProjectilePath, CommandletJsonFieldByNamesAsString(Params, { TEXT("PatchJson"), TEXT("patch") }), bSaveAssets);
+	}
+	if (Command == TEXT("MCP_ProjectileValidate") || Command == TEXT("projectile_validate"))
+	{
+		FString ProjectilePath;
+		Params->TryGetStringField(TEXT("ProjectilePath"), ProjectilePath);
+		Params->TryGetStringField(TEXT("projectile_path"), ProjectilePath);
+		return UMassBattleProjectileMCPApi::MCP_ProjectileValidate(ProjectilePath, CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_ProjectileDelete") || Command == TEXT("projectile_delete"))
+	{
+		FString ProjectilePath;
+		Params->TryGetStringField(TEXT("ProjectilePath"), ProjectilePath);
+		Params->TryGetStringField(TEXT("projectile_path"), ProjectilePath);
+		return UMassBattleProjectileMCPApi::MCP_ProjectileDelete(ProjectilePath, CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
 	}
 
 	return CommandletMakeErrorJson(FString::Printf(TEXT("Unsupported MassBattleEditorMCP commandlet command: %s"), *Command));

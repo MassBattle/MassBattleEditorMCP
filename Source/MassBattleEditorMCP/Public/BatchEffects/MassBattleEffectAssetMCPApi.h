@@ -38,6 +38,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
 	static FString MCP_EffectDuplicateAsset(const FString& SourceAssetPath, const FString& NewAssetName, const FString& PackagePath, bool bSaveAssets);
 
+	/** Discard only an unsaved in-memory duplicate created by MCP_EffectDuplicateAsset. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
+	static FString MCP_EffectDiscardUnsavedDuplicate(const FString& AssetPath);
+
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
 	static FString MCP_BatchFxReadRendererDefaults(const FString& TargetClassPath);
 

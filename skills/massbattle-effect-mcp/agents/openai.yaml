@@ -1,4 +1,4 @@
 interface:
-  display_name: "MassBattle Effect MCP"
-  short_description: "Use Niagara MCP primitives for effects"
-  default_prompt: "Use $massbattle-effect-mcp to inspect a Niagara reference and make a safe union-merge edit."
+  display_name: "MassBattle Batch FX Conversion"
+  short_description: "Faithfully map any VFX to MassBattle batching"
+  default_prompt: "Use $massbattle-effect-mcp to preserve a source effect while replacing only its invocation/input ABI with MassBattleFrame Burst NDC or Attached-array batching, then place the renderer and runtime-validate the result."

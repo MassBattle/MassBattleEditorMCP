@@ -19,6 +19,7 @@
 #include "Modules/ModuleManager.h"
 #include "NiagaraDataChannelPublic.h"
 #include "NiagaraSystem.h"
+#include "ObjectTools.h"
 #include "Particles/ParticleEmitter.h"
 #include "Particles/ParticleLODLevel.h"
 #include "Particles/ParticleModule.h"
@@ -40,6 +41,8 @@ DEFINE_LOG_CATEGORY(LogMassBattleEffectAssetMCPApi);
 
 namespace MassBattleEffectAssetMCP
 {
+static TSet<FString> UnsavedMCPDuplicatePaths;
+
 static FString ToJsonString(const TSharedPtr<FJsonObject>& Obj)
 {
 	FString Output;
@@ -616,6 +619,7 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_EffectAssetExportText"), TEXT("effect_asset.text"), TEXT("Write a deterministic text dump for close reading."), TEXT("AssetPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectAssetSoftDelete"), TEXT("effect_asset.lifecycle"), TEXT("Plan moving an unreferenced generic asset to trash; apply is blocked by default unless allow_unsafe_asset_move=true is supplied."), TEXT("AssetPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectDuplicateAsset"), TEXT("effect_asset.write"), TEXT("Duplicate an arbitrary asset into a package path."), TEXT("SourceAssetPath, NewAssetName, PackagePath, bSaveAssets")));
+	Tools.Add(Tool(TEXT("MCP_EffectDiscardUnsavedDuplicate"), TEXT("effect_asset.rollback"), TEXT("Discard only an unsaved in-memory duplicate created by this MCP session; persisted assets are always rejected."), TEXT("AssetPath")));
 	Tools.Add(Tool(TEXT("MCP_BatchFxReadRendererDefaults"), TEXT("batch_fx.read"), TEXT("Read AMassBattleFxRenderer Blueprint CDO defaults used by newly placed actors."), TEXT("TargetClassPath")));
 	Tools.Add(Tool(TEXT("MCP_BatchFxSetRendererDefaults"), TEXT("batch_fx.write"), TEXT("Set AMassBattleFxRenderer Blueprint CDO defaults: Niagara, NDC_BurstFx, SubType, batch size, and pooling cooldown."), TEXT("TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets")));
 	Root->SetArrayField(TEXT("tools"), Tools);
@@ -894,11 +898,73 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectDuplicateAsset(const FString& So
 			return MakeErrorJson(SaveError);
 		}
 	}
+	else
+	{
+		UnsavedMCPDuplicatePaths.Add(NewAsset->GetPathName());
+	}
 
 	TSharedPtr<FJsonObject> Root = MakeSuccessObject();
 	Root->SetStringField(TEXT("asset_path"), NewAsset->GetPathName());
 	Root->SetStringField(TEXT("package"), NewAsset->GetOutermost() ? NewAsset->GetOutermost()->GetName() : TEXT(""));
 	Root->SetBoolField(TEXT("saved"), bSaved);
+	return ToJsonString(Root);
+}
+
+FString UMassBattleEffectAssetMCPApi::MCP_EffectDiscardUnsavedDuplicate(const FString& AssetPath)
+{
+	using namespace MassBattleEffectAssetMCP;
+
+	const FString ObjectPath = NormalizeObjectPath(AssetPath);
+	if (!UnsavedMCPDuplicatePaths.Contains(ObjectPath))
+	{
+		return MakeErrorJson(TEXT("Asset is not an unsaved duplicate created by MCP_EffectDuplicateAsset in this editor session"));
+	}
+
+	UObject* Object = FindObject<UObject>(nullptr, *ObjectPath);
+	if (!Object || !Object->IsAsset())
+	{
+		UnsavedMCPDuplicatePaths.Remove(ObjectPath);
+		return MakeErrorJson(TEXT("Tracked unsaved duplicate is no longer a loaded asset"));
+	}
+
+	UPackage* Package = Object->GetOutermost();
+	const FString PackageName = Package ? Package->GetName() : FString();
+	FString ExistingFilename;
+	if (!Package || !PackageName.StartsWith(TEXT("/Game/")))
+	{
+		return MakeErrorJson(TEXT("Unsaved duplicate must belong to a /Game/ package"));
+	}
+	if (FPackageName::DoesPackageExist(PackageName, &ExistingFilename))
+	{
+		UnsavedMCPDuplicatePaths.Remove(ObjectPath);
+		return MakeErrorJson(FString::Printf(
+			TEXT("Refusing rollback because the asset package exists on disk: %s"),
+			*ExistingFilename));
+	}
+	if (!Package->IsDirty())
+	{
+		return MakeErrorJson(TEXT("Refusing rollback because the tracked package is not dirty"));
+	}
+
+	TArray<UObject*> ObjectsToDiscard;
+	ObjectsToDiscard.Add(Object);
+	const int32 DeletedCount = ObjectTools::DeleteObjectsUnchecked(ObjectsToDiscard);
+	const bool bDiscarded = DeletedCount == 1;
+	if (bDiscarded)
+	{
+		UnsavedMCPDuplicatePaths.Remove(ObjectPath);
+	}
+
+	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetBoolField(TEXT("success"), bDiscarded);
+	Root->SetBoolField(TEXT("discarded"), bDiscarded);
+	Root->SetStringField(TEXT("asset_path"), ObjectPath);
+	Root->SetStringField(TEXT("package"), PackageName);
+	Root->SetNumberField(TEXT("deleted_count"), DeletedCount);
+	if (!bDiscarded)
+	{
+		Root->SetStringField(TEXT("error"), TEXT("ObjectTools failed to discard the unsaved duplicate"));
+	}
 	return ToJsonString(Root);
 }
 
