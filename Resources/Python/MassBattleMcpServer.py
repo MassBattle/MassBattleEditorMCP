@@ -190,6 +190,92 @@ async def unit_find_assets(query: Any) -> Dict[str, Any]:
 
 
 @mcp.tool()
+async def projectile_get_api_status() -> Dict[str, Any]:
+    """List projectile DataAsset CRUD, schema, and validation capabilities."""
+    return await get_connection().send_command("MCP_ProjectileGetApiStatus")
+
+
+@mcp.tool()
+async def projectile_list(options: Any = None) -> Dict[str, Any]:
+    """List MassBattle projectile configuration DataAssets."""
+    return await get_connection().send_command(
+        "MCP_ProjectileList",
+        {"OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def projectile_query(query: Any = None) -> Dict[str, Any]:
+    """Query MassBattle projectile configuration DataAssets by path or name."""
+    return await get_connection().send_command(
+        "MCP_ProjectileQuery",
+        {"QueryJson": _json_arg(query)},
+    )
+
+
+@mcp.tool()
+async def projectile_get(projectile_path: str, options: Any = None) -> Dict[str, Any]:
+    """Read one projectile DataAsset in active-only or full source-aligned form."""
+    return await get_connection().send_command(
+        "MCP_ProjectileGet",
+        {"ProjectilePath": projectile_path, "OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def projectile_get_schema(options: Any = None) -> Dict[str, Any]:
+    """Read projectile field types, enums, conditions, tooltips, and write rules."""
+    return await get_connection().send_command(
+        "MCP_ProjectileGetSchema",
+        {"OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def projectile_create(create_spec: Any, save_assets: bool = True) -> Dict[str, Any]:
+    """Create a projectile DataAsset from a template or class defaults."""
+    return await get_connection().send_command(
+        "MCP_ProjectileCreate",
+        {"CreateSpecJson": _json_arg(create_spec), "bSaveAssets": save_assets},
+    )
+
+
+@mcp.tool()
+async def projectile_write(
+    projectile_path: str,
+    patch: Any,
+    save_assets: bool = True,
+) -> Dict[str, Any]:
+    """Union-write source-aligned projectile data after transient preflight and validation."""
+    return await get_connection().send_command(
+        "MCP_ProjectileWrite",
+        {
+            "ProjectilePath": projectile_path,
+            "PatchJson": _json_arg(patch),
+            "bSaveAssets": save_assets,
+        },
+    )
+
+
+@mcp.tool()
+async def projectile_validate(projectile_path: str, options: Any = None) -> Dict[str, Any]:
+    """Validate movement, damage ownership, triggers, lifecycle FX, and duplicate explosions."""
+    return await get_connection().send_command(
+        "MCP_ProjectileValidate",
+        {"ProjectilePath": projectile_path, "OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def projectile_delete(projectile_path: str, options: Any = None) -> Dict[str, Any]:
+    """Plan or delete a projectile DataAsset; dry_run=true by default."""
+    return await get_connection().send_command(
+        "MCP_ProjectileDelete",
+        {"ProjectilePath": projectile_path, "OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
 async def style_summarize_units(options: Any = None) -> Dict[str, Any]:
     """Summarize MassBattle unit organization by style, family, and path category."""
     return await get_connection().send_command("MCP_StyleSummarizeUnits", {"OptionsJson": _json_arg(options)})

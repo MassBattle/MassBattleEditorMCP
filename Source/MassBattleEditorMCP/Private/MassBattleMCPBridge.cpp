@@ -10,6 +10,7 @@
 #include "MassBattleEditorMCPApi.h"
 #include "MassBattleMCPServerRunnable.h"
 #include "MassBattleUnitEditorMCPApi.h"
+#include "MassBattleProjectileMCPApi.h"
 #include "MassBattleUnitMCPApi.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
@@ -278,6 +279,16 @@ FString UMassBattleMCPBridge::InternalExecuteCommand(const FString& CommandType,
 	if (CommandType == TEXT("MCP_EffectAssetExportText")) { return UMassBattleEffectAssetMCPApi::MCP_EffectAssetExportText(StringParam(Params, TEXT("AssetPath")), JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_EffectAssetSoftDelete")) { return UMassBattleEffectAssetMCPApi::MCP_EffectAssetSoftDelete(StringParam(Params, TEXT("AssetPath")), JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_EffectDuplicateAsset")) { return UMassBattleEffectAssetMCPApi::MCP_EffectDuplicateAsset(StringParam(Params, TEXT("SourceAssetPath")), StringParam(Params, TEXT("NewAssetName")), StringParam(Params, TEXT("PackagePath")), BoolParam(Params, TEXT("bSaveAssets"))); }
+	if (CommandType == TEXT("MCP_ProjectileGetApiStatus")) { return UMassBattleProjectileMCPApi::MCP_ProjectileGetApiStatus(); }
+	if (CommandType == TEXT("MCP_ProjectileList")) { return UMassBattleProjectileMCPApi::MCP_ProjectileList(JsonParam(Params, TEXT("OptionsJson"))); }
+	if (CommandType == TEXT("MCP_ProjectileQuery")) { return UMassBattleProjectileMCPApi::MCP_ProjectileQuery(JsonParam(Params, TEXT("QueryJson"))); }
+	if (CommandType == TEXT("MCP_ProjectileGet")) { return UMassBattleProjectileMCPApi::MCP_ProjectileGet(StringParam(Params, TEXT("ProjectilePath")), JsonParam(Params, TEXT("OptionsJson"))); }
+	if (CommandType == TEXT("MCP_ProjectileGetSchema")) { return UMassBattleProjectileMCPApi::MCP_ProjectileGetSchema(JsonParam(Params, TEXT("OptionsJson"))); }
+	if (CommandType == TEXT("MCP_ProjectileCreate")) { return UMassBattleProjectileMCPApi::MCP_ProjectileCreate(JsonParam(Params, TEXT("CreateSpecJson")), BoolParam(Params, TEXT("bSaveAssets"), true)); }
+	if (CommandType == TEXT("MCP_ProjectileWrite")) { return UMassBattleProjectileMCPApi::MCP_ProjectileWrite(StringParam(Params, TEXT("ProjectilePath")), JsonParam(Params, TEXT("PatchJson")), BoolParam(Params, TEXT("bSaveAssets"), true)); }
+	if (CommandType == TEXT("MCP_ProjectileValidate")) { return UMassBattleProjectileMCPApi::MCP_ProjectileValidate(StringParam(Params, TEXT("ProjectilePath")), JsonParam(Params, TEXT("OptionsJson"))); }
+	if (CommandType == TEXT("MCP_ProjectileDelete")) { return UMassBattleProjectileMCPApi::MCP_ProjectileDelete(StringParam(Params, TEXT("ProjectilePath")), JsonParam(Params, TEXT("OptionsJson"))); }
+
 	if (CommandType == TEXT("MCP_EffectDiscardUnsavedDuplicate")) { return UMassBattleEffectAssetMCPApi::MCP_EffectDiscardUnsavedDuplicate(StringParam(Params, TEXT("AssetPath"))); }
 	if (CommandType == TEXT("MCP_BatchFxReadRendererDefaults")) { return UMassBattleEffectAssetMCPApi::MCP_BatchFxReadRendererDefaults(StringParam(Params, TEXT("TargetClassPath"))); }
 	if (CommandType == TEXT("MCP_BatchFxSetRendererDefaults")) { return UMassBattleEffectAssetMCPApi::MCP_BatchFxSetRendererDefaults(StringParam(Params, TEXT("TargetClassPath")), StringParam(Params, TEXT("NiagaraSystemPath")), StringParam(Params, TEXT("NdcBurstFxPath")), IntParam(Params, TEXT("SubType")), IntParam(Params, TEXT("RenderBatchSize")), FloatParam(Params, TEXT("PoolingCooldown")), BoolParam(Params, TEXT("bSaveAssets"))); }

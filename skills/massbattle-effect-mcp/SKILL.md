@@ -1,6 +1,6 @@
 ---
 name: massbattle-effect-mcp
-description: Use when Codex needs to inspect, text-export, compare, graph-edit, or manifest-translate Niagara assets and related Mass Battle batch effects; especially for source-faithful VFX-to-batched-Niagara mapping, preserving original visual graphs while adding Mass Battle inputs, validating translations, or coordinating effect work with Unit MCP.
+description: Convert arbitrary Unreal VFX into source-faithful Niagara systems that consume the MassBattleFrame Batch FX interface. Use for inspecting, exporting, comparing, graph-editing, manifest-translating, and runtime-validating Burst or Attached batch effects while preserving source visual semantics. Route direct damage wiring to massbattle-instant-damage-fx and travelling projectile gameplay to massbattle-projectile-authoring; both routes use this same conversion contract for their visuals.
 ---
 
 # MassBattle Effect MCP
@@ -13,7 +13,31 @@ Do not describe this skill as a runtime feature, Unreal plugin, MCP server, Effe
 
 Treat MCP tools like compiler primitives: query, read source IR, compare, duplicate, apply an explicit edit plan, validate, and save. A manifest tool may compose those primitives for many assets, but it must not guess visual edits or hide per-item results.
 
-Do not use Effect MCP as a level-layout tool. It may generate and configure a reusable `AMassBattleFxRenderer` Blueprint asset. The user owns whether and where that actor is placed in a test map; newly placed actors should inherit the Blueprint defaults as long as the level instance is not manually overridden.
+## The Only Batch Meaning
+
+Use exactly this equivalence:
+
+```text
+BatchE([C0, C1, ..., Cn]) == [E(C0), E(C1), ..., E(Cn)]
+```
+
+Change repeated per-unit effect invocation into one MassBattleFrame batch submission. Preserve `E`: emitters, renderers, materials, curves, timing, random policy, events, and visible behavior. Change only the execution/input ABI needed to consume MassBattle Burst NDC events or Attached arrays.
+
+The source can be Niagara, Cascade, Blueprint FX, material/mesh/flipbook, or a composite Marketplace effect. Under the current MassBattleFrame Batch FX runtime, the converted visual backend is Niagara. `GPUComputeSim`, pooling, a renderer CDO write, a copied template, or a non-empty `SubType` alone is never “batch conversion.”
+
+Choose gameplay authority before wiring the converted visual:
+
+```text
+Agent resolves damage at TimeOfHit
+    -> $massbattle-instant-damage-fx
+
+Mass projectile Entity owns travel/collision/damage/lifecycle
+    -> $massbattle-projectile-authoring
+```
+
+This routing does not create a second Niagara interpretation. Launch, flight, hit, removal, aura, trail, and impact visuals all use the same source-faithful MassBattleFrame conversion contract.
+
+Effect MCP itself does not lay out levels, but the task workflow must use the available Unreal/level tools to place the generated `AMassBattleFxRenderer` actor and runtime-test it. Do not shift placement back to the user when the editor MCP can perform it.
 
 ## Safety
 
@@ -43,7 +67,7 @@ Use these Niagara MCP tools when available:
 - `MCP_NiagaraExportText(SystemPath, OptionsJson)`: create a deterministic text dump for close reading.
 - `MCP_NiagaraMergeWrite(SystemPath, PatchJson, bSaveAssets)`: union-merge property writes on `system`, `emitter_data`, or `renderer` targets.
 - `MCP_NiagaraSetModulePin(SystemPath, SelectorJson, PinName, ValueText, bSaveAssets)`: set one FunctionCall module input pin default value. By default, linked pins should be treated as unsafe to overwrite unless `allow_linked=true` is explicitly passed in the selector.
-- `MCP_NiagaraApplyGraphEdit(SystemPath, EditJson, bSaveAssets)`: apply an ordered graph-edit batch. Operations include `add_user_parameter`, `add_user_data_interface`, `insert_module`, `set_module_enabled`, `set_stack_input`, bulk `set_stack_inputs`, `connect_pins`, `disconnect_pins`, `disconnect_pin`, and `rewire_pin`. It compiles once, waits for CPU/GPU completion, validates preservation, and saves only on success.
+- `MCP_NiagaraApplyGraphEdit(SystemPath, EditJson, bSaveAssets)`: apply an ordered graph-edit batch. Operations include `add_user_parameter`, `add_user_data_interface`, `insert_module`, `insert_assignment`, `set_module_enabled`, `set_stack_input`, bulk `set_stack_inputs`, `connect_pins`, `disconnect_pins`, `disconnect_pin`, and `rewire_pin`. `insert_assignment` adds typed targets to any selected Niagara stack without requiring a one-off module asset. The edit compiles once, waits for CPU/GPU completion, validates preservation, and saves only on success.
 - `MCP_NiagaraSetEmitterEnabled(SystemPath, EmitterName, bEnabled, bSaveAssets)`: explicitly enable or disable one emitter handle.
 - `MCP_NiagaraDelete(SystemPath, DeleteJson, bSaveAssets)`: explicit deletion actions such as renderer removal, user parameter removal, or destructive emitter disabling.
 - `niagara_batch_translate(manifest, apply=false, save_assets=true)`: preflight or execute an explicit `massbattle.niagara.translation_manifest.v1`. It performs source read, duplicate, exact-clone comparison, graph edit, translation comparison, and gated save per item. `apply=false` is read-only and is the default.
@@ -71,18 +95,32 @@ Use Unit MCP only to apply an already-designed effect to a unit config. Use Niag
 4. Choose only the runtime protocol mapping: `Burst`, `Attached`, or `unsupported_pending_adapter`. Do not redesign the visual effect during this decision.
 5. Duplicate the exact source with `MCP_EffectDuplicateAsset`. Immediately run `MCP_NiagaraCompareSystems(..., {"mode":"exact"})`; stop if it is not an exact source-neutral clone. Exact mode defaults to a structural/compile-error gate without `ready_to_run`, because a new unsaved duplicate may not have entered Niagara's compile queue yet.
 6. Use `MCP_NiagaraReadGraph` before inserting or reconnecting nodes. Copy the full contextual node `reference`, stable pin identifier, and exact `stack_inputs[].name`; never infer GUIDs or pin names.
-7. Apply the smallest explicit adapter edit with `MCP_NiagaraApplyGraphEdit`. Add Mass Battle inputs and adapter modules while leaving the visual subgraph unchanged. List every intentional source-edge removal in `validation.allowed_removed_edges`.
+7. Apply the smallest explicit adapter edit with `MCP_NiagaraApplyGraphEdit`. Add Mass Battle inputs, adapter modules, or typed Assignment state while leaving the visual subgraph unchanged. Probe first, then list every intentional stack/visual edge removal exactly in `validation.allowed_removed_edges`.
 8. Run `MCP_NiagaraCompareSystems(..., {"mode":"translation"})`. Reject undeclared edge removal, source module disablement, changed source pin defaults, timing/curve changes, renderer/material changes, lost events, or simulation-target changes.
 9. Save only after the graph-edit compile barrier, readiness, preservation, and translation comparison pass. Translation mode requires `ready_to_run` by default. Reload and compare again.
 10. Validate behavior in a paired test scene: original and translation receive the same transforms, parameters, seed policy, and trigger times. Capture synchronized frames or SimCache evidence. Report any difference; never label an untested result “perfect”.
 
 For many systems, build one explicit `massbattle.niagara.translation_manifest.v1`. Run `niagara_batch_translate(..., apply=false)` first, review every source/target/edit/comparison entry, then run with `apply=true`. A failed item is not counted as converted; the batch tool attempts to discard its MCP-created unsaved duplicate and reports the cleanup result.
 
+## Runtime Translation Gates
+
+Treat a successful graph compile as necessary but insufficient. Niagara can compile an inserted object-backed Data Interface whose required asset property is still `None`, then complete the system at age zero during proxy initialization.
+
+- After inserting any module with a Data Interface input, set the DI explicitly with `set_stack_input` in `data_interface` mode and `properties`, even when the module asset appears to have a default. Immediately read the inserted node back and assert the exact object path. For the Burst adapter, require `Data Channel = /MassBattle/Core/FxRenderer/NS_Modules/NDC_BurstFx.NDC_BurstFx`.
+- Search the PIE log for `Error initializing data interface` and `Error initializing data interfaces`. Any match fails the runtime gate.
+- Inspect `SystemState` before native Burst lowering. A source system can legitimately end before the NDC listener reaches its first consumable frame. Keep the untouched Exact artifact, and if required add only a manifest-declared scheduler window extension to the Native artifact. Allow only the exact RI parameter through `validation.allowed_rapid_iteration_parameter_changes` (for example `Constants.SystemState.Loop Duration`); never use a broad timing allowlist.
+- In the paired Demo, require every Source/Exact pair to become active. For every Native item require a valid batch component, advancing system age, correct `User.EnableBurstFx`/`User.SubType` handshake, no DI initialization error, and actual particles. If CPU particle counts cannot observe a GPU emitter, require synchronized viewport or SimCache evidence instead.
+- Emit a per-asset runtime JSON report. Count the batch complete only when the source inventory count, structural conversion count, Demo trigger count, and runtime-pass count all match.
+
 ## Source-Faithful Translation Contract
 
 A faithful target may add adapter parameters, adapter modules, and declared adapter edges. It must preserve all source visual behavior outside that allowlist. This is analogous to compiler lowering: change the execution ABI, not the program's intended output.
 
+A scheduler-only compatibility change is permitted only when the runtime ABI itself needs it (for example, keeping a very short one-shot system alive until the first NDC read). Record the exact old/new value and reason, constrain validation to that named parameter, keep an untouched Exact artifact, and prove in PIE that the visual/particle graph still matches. Do not treat this as permission to simplify authored timing.
+
 Classify unsupported semantics explicitly. Delayed SpawnRate curves, per-unit motion spawning, ribbon continuity, cross-emitter events, and attached ownership can require dedicated adapter state. Do not compress them into an immediate burst. Add the missing adapter/MCP primitive or mark the item blocked.
+
+For `SpawnPerUnit`, distinguish per-controller state from emitter scheduling. `insert_assignment` can preserve a separate remainder, movement threshold, probability decision, and desired count on every attached controller particle. It does not make the visual emitter spawn that variable count per controller. Stock `SpawnParticlesFromOtherEmitter` still computes one emitter-level `SpawnRemainder` and one `SpawnInfo`, then optionally multiplies a common count by the controller count. That is equivalent only when every controller has the same schedule. Do not replace distance-based spawning with a fixed common rate, overspawn-and-kill pool, or ribbon template and call it faithful. Require an adapter that emits the exact union of per-controller counts and interpolation times; otherwise classify the item `blocked_by_runtime_abi` and keep any approximation separate.
 
 Keep three artifacts when useful:
 
@@ -90,9 +128,9 @@ Keep three artifacts when useful:
 - `Faithful`: source duplicate plus minimal Mass Battle protocol adapter.
 - `Optimized`: optional hand-authored recreation, stored separately and labeled non-equivalent until visual regression tests pass.
 
-## Optional Template Workflow
+## Optional Non-Acceptance Approximation
 
-Use templates only for a new effect or an explicitly requested optimized recreation. Do not use this section for a source-faithful translation.
+Use templates only for a new effect or an explicitly requested optimized recreation. Store the result under an `Optimized` or `Approx` path, label it non-equivalent, and never count it toward the source conversion inventory or acceptance total.
 
 1. Read the default style profile with Unit Editor MCP: `MCP_EditorGetProfile("style", "default")`.
 2. Inspect `batch_fx_templates` and choose the closest reference:
@@ -119,8 +157,8 @@ When the source effect type is unknown:
    - Burst: `NDC_BurstFx` fields `BurstLocation`, `BurstOrientation`, `BurstScale`, `SubType`, `Style`.
    - Attached: `LocationArray_Attached`, `OrientationArray_Attached`, `ScaleArray_Attached`, `IsHiddenArray_Attached`, `NiagaraIDIndex_Attached`, `NiagaraIDAcquireTag_Attached`, optional `StyleArray_Attached`.
 8. Duplicate `BP_FxRendererTemplate` with `MCP_DuplicateClassAsset` or a generic asset duplicate, then call `MCP_BatchFxSetRendererDefaults`.
-9. Tell the user to place one instance of the generated FX renderer Blueprint in the test level manually. The actor must exist at BeginPlay because `AMassBattleFxRenderer::BeginPlay` registers the subtype with `MassBattleSubsystem->FxRenderers`.
-10. Before placement, use `MCP_BatchFxReadRendererDefaults` to verify the Blueprint asset defaults. The expected batch path has a non-null Niagara system, a non-null `NDC_BurstFx`, and the same `SubType` that unit `FFxConfig` uses.
+9. Use the available Unreal/level MCP to place one instance of the generated FX renderer Blueprint in the test level. It must exist at BeginPlay because `AMassBattleFxRenderer::BeginPlay` registers the subtype with `MassBattleSubsystem->FxRenderers`.
+10. Before and after placement, use `MCP_BatchFxReadRendererDefaults` plus actor readback to verify the Blueprint defaults and level instance. The expected Burst path has a non-null Niagara system, a non-null `NDC_BurstFx`, and the same `SubType` that unit `FFxConfig` uses.
 11. Use Unit MCP to merge a `FFxConfig` into `Hit.SpawnFx`, `Death.SpawnFx`, `Appear.SpawnFx`, `Attack.SpawnFx`, or `Select.SpawnOnSelected.SpawnFx`.
 12. For `FFxConfig`, leave unbatched assets empty and set `SubType`, `StyleType`, `bAttached`, `Quantity`, `Delay`, `LifeSpan`, and `Transform`. In the current project JSON merge path, `SubType` and `StyleType` should be strings such as `SubType35` and `Style0`.
 13. Run translation comparison and paired visual validation before counting the item as converted. If the existing Mass Battle payload cannot express source timing or ownership semantics, report the missing field/adapter instead of changing the effect.
@@ -202,9 +240,43 @@ Use one ordered batch so newly inserted nodes can be referenced by operation ID:
 }
 ```
 
-Add a user data interface with `add_user_data_interface` and `name`, `data_interface_class`, and optional `properties`. `set_stack_input` supports `local`, `linked_parameter`, `hlsl`, `dynamic_input`, and `data_interface`; address inputs with names returned in `stack_inputs`. For `local`, prefer round-tripping the exact `value_text` from `MCP_NiagaraReadGraph`; `enum_name` and scalar `literal`/`value` are also accepted. Use `rewire_pin` with `target`, `through_input`, and `through_output` when an existing linked visual input must flow through a new per-event transform; it requires exactly one original source and restores the original link if the replacement fails. `connect_pins` requires `replace=true` before replacing an occupied input. Always include the returned `usage_id` when selecting `ParticleEventScript` or `ParticleSimulationStageScript`; those stacks can have several instances of the same script usage.
+Add a user data interface with `add_user_data_interface` and `name`, `data_interface_class`, and optional `properties`. Add typed state with `insert_assignment`, a graph selector, `stack_index`, and a non-empty `targets` array whose entries contain `name`, `type`, and optional `default`. Reference the created Assignment by operation ID and set each target with `set_stack_input`. Supported Assignment types include bool, int, float, vec2/3/4, position, quaternion, and color.
 
-The preservation gate compares system/emitter timing and determinism settings, emitters, renderer/material properties, CPU/GPU sim targets, event handlers, existing user-parameter defaults, Rapid Iteration values, pre-existing module identity/enabled state, graph-node identity, and original graph-pin defaults. It reports edge diffs and rejects removed source edges unless they exactly match `validation.allowed_removed_edges` (or the caller explicitly uses the unsafe `allow_removed_edges=true`). Saving is blocked on compile errors, failed preservation, undeclared edge removal, or a not-ready system.
+`set_stack_input` supports `local`, `linked_parameter`, `hlsl`, `dynamic_input`, and `data_interface`; address inputs with names returned in `stack_inputs`. The `hlsl` mode accepts an expression such as `Particles.Age`, not a full `return Particles.Age;` statement. For `local`, prefer round-tripping the exact `value_text` from `MCP_NiagaraReadGraph`; `enum_name` and scalar `literal`/`value` are also accepted. Use `rewire_pin` with `target`, `through_input`, and `through_output` when an existing linked visual input must flow through a new per-event transform; it requires exactly one original source and restores the original link if the replacement fails. `connect_pins` requires `replace=true` before replacing an occupied input. Always include the returned `usage_id` when selecting `ParticleEventScript` or `ParticleSimulationStageScript`; those stacks can have several instances of the same script usage.
+
+```json
+{
+  "id": "controller_state",
+  "op": "insert_assignment",
+  "graph": {
+    "scope": "emitter",
+    "emitter": "MB_BatchController_Attached",
+    "script_usage": "ParticleUpdateScript"
+  },
+  "stack_index": -1,
+  "targets": [
+    {"name": "Particles.MB_SpawnRemainder", "type": "float", "default": "0.0"}
+  ]
+}
+```
+
+For an object-backed DI, use a concrete property write rather than assuming insertion copied a template value:
+
+```json
+{
+  "op": "set_stack_input",
+  "node": { "operation": "burst_init" },
+  "input": "Data Channel",
+  "value": {
+    "mode": "data_interface",
+    "properties": {
+      "Channel": "/MassBattle/Core/FxRenderer/NS_Modules/NDC_BurstFx.NDC_BurstFx"
+    }
+  }
+}
+```
+
+The preservation gate compares system/emitter timing and determinism settings, emitters, renderer/material properties, CPU/GPU sim targets, event handlers, existing user-parameter defaults, Rapid Iteration values, pre-existing module identity/enabled state, graph-node identity, and original graph-pin defaults. It reports edge diffs and rejects removed source edges unless they exactly match `validation.allowed_removed_edges` (or the caller explicitly uses the unsafe `allow_removed_edges=true`). Niagara can regenerate a duplicated pin's `PersistentGuid` during compilation; compare its stable node-local ordinal, direction, name, defaults, and edges rather than treating that generated GUID alone as authored semantics. Saving is blocked on compile errors, failed preservation, undeclared edge removal, or a not-ready system.
 
 Translation comparison canonicalizes the source and target root object/package paths before fingerprinting, so an exact duplicate can match despite living in a new package. `mode=exact` permits no semantic additions. `mode=translation` permits additive adapter parameters/modules/edges while requiring all source semantics to remain present.
 
@@ -258,6 +330,6 @@ Examples:
 
 ## Mass Battle Use
 
-For Mass Battle batch effects, first use Niagara MCP to inspect or author reference visual behavior. Then use existing Mass Battle/unit MCP only for attaching the resulting asset/config to units.
+Use Effect/Niagara MCP to translate the source visual into the current MassBattleFrame Niagara batch backend. Use Unit MCP, Projectile MCP, and level tools only for gameplay ownership, configuration references, renderer placement, and runtime triggering.
 
-If a requested batch effect does not need Niagara, identify the missing primitive first: material parameter read/write, VAT metadata read/write, Blueprint graph read, C++ callgraph read, or unit config write. Add that MCP only when direct filesystem/source access cannot provide it.
+If the existing Burst/Attached ABI cannot express a source behavior, identify the exact missing adapter or runtime field and report `blocked_by_runtime_abi`. Do not bypass the batch interface, simplify the effect, or invent an unrelated MCP and call the conversion complete.

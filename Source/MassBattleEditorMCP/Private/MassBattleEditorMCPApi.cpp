@@ -1474,6 +1474,51 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("QueryJson"),
 		TEXT("unit.generate"));
 
+	AddTool(TEXT("MCP_ProjectileGetApiStatus"),
+		TEXT("返回 Projectile MCP CRUD、Schema 与验证能力"),
+		TEXT(""),
+		TEXT("projectile.status"));
+
+	AddTool(TEXT("MCP_ProjectileList"),
+		TEXT("列出 UMassBattleProjectileConfigDataAsset 抛体配置"),
+		TEXT("OptionsJson"),
+		TEXT("projectile.query"));
+
+	AddTool(TEXT("MCP_ProjectileQuery"),
+		TEXT("按路径或名称查询 UMassBattleProjectileConfigDataAsset 抛体配置"),
+		TEXT("QueryJson"),
+		TEXT("projectile.query"));
+
+	AddTool(TEXT("MCP_ProjectileGet"),
+		TEXT("读取一个抛体配置的 active-only 或完整源码字段 JSON"),
+		TEXT("ProjectilePath, OptionsJson"),
+		TEXT("projectile.read"));
+
+	AddTool(TEXT("MCP_ProjectileGetSchema"),
+		TEXT("读取抛体可编辑字段、枚举、条件字段、tooltip 和数组写入规则"),
+		TEXT("OptionsJson"),
+		TEXT("projectile.schema"));
+
+	AddTool(TEXT("MCP_ProjectileCreate"),
+		TEXT("从模板或类默认值创建抛体 DataAsset，并可并集写入初始配置"),
+		TEXT("CreateSpecJson, bSaveAssets"),
+		TEXT("projectile.create"));
+
+	AddTool(TEXT("MCP_ProjectileWrite"),
+		TEXT("对抛体 DataAsset 做预检、验证后的源码字段并集写入；省略字段保持不变"),
+		TEXT("ProjectilePath, PatchJson, bSaveAssets"),
+		TEXT("projectile.write"));
+
+	AddTool(TEXT("MCP_ProjectileValidate"),
+		TEXT("验证运动、伤害、触发、Agent/Projectile 双伤害、生命周期 FX 和 OnHit/OnRemoval 双爆炸"),
+		TEXT("ProjectilePath, OptionsJson"),
+		TEXT("projectile.validate"));
+
+	AddTool(TEXT("MCP_ProjectileDelete"),
+		TEXT("显式软删除或硬删除抛体资产；默认 dry_run=true"),
+		TEXT("ProjectilePath, OptionsJson"),
+		TEXT("projectile.delete"));
+
 	AddTool(TEXT("MCP_NiagaraQuery"),
 		TEXT("按路径/名称检索 Niagara System 资产，作为特效参考入口"),
 		TEXT("QueryJson"),

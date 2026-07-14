@@ -7,6 +7,27 @@ description: Create, inspect, edit, delete, and validate MassBattle unit assets 
 
 Use UE editor APIs, commandlets, or the MassBattleEditorMCP tools. Do not edit `.uasset` files directly. Keep names and paths aligned with existing MassBattle source conventions; prefer cloning a nearby official/demo unit template and applying a small union patch.
 
+## Combat Authoring Routing
+
+Choose gameplay authority before editing any visual array:
+
+```text
+Direct/melee/hitscan/instant area damage
+    -> $massbattle-instant-damage-fx
+    -> Agent TimeOfHitAction applies damage
+    -> one-shot launch/impact visuals use MassBattle Burst Batch FX
+
+Bullet/shell/grenade/missile/arrow/homing or interceptable shot
+    -> $massbattle-projectile-authoring
+    -> projectile DataAsset applies damage
+    -> Agent TimeOfHitAction is normally None
+    -> flight uses Attached Batch FX; launch/hit/removal use Burst Batch FX
+```
+
+Use `$massbattle-effect-mcp` only for the source-faithful Niagara/Batch-FX asset conversion after the combat path is chosen. Do not treat `Attack.SpawnFx` and `Attack.SpawnProjectile` as interchangeable presentation choices.
+
+Before writing `Attack.SpawnProjectile`, read and validate the referenced `UMassBattleProjectileConfigDataAsset` with Projectile MCP. Wiring a reference through Unit MCP does not prove that movement, collision, damage, or lifecycle fields are correct.
+
 ## Inspect Or Edit
 
 1. List or locate units with the Unit MCP discovery tools, scoped to style roots such as `/Game/Unit`, `/Game/Toon_Soldiers_WW2`, `/Game/StylizedArmyPackA`, and `/Game/World_Flags`.

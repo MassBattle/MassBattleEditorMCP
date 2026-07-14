@@ -36,14 +36,24 @@ Local documentation entry: `Document/index.html` (`Document` worktree / `Documen
 
 This repository includes Codex skills under `skills/`:
 
-`skills/massbattle-unit-authoring`: guides AI through Unit MCP creation, reading, union-writing, deletion, and validation for MassBattle unit configs.
-`skills/massbattle-effect-mcp`: guides AI through Niagara / Effect MCP querying, reading, exporting, duplication, and batch-effect configuration, with Unit MCP coordination.
+- `skills/massbattle-effect-mcp`: converts arbitrary source VFX into source-faithful Niagara systems that consume the MassBattleFrame Batch FX protocol.
+- `skills/massbattle-instant-damage-fx`: authors direct, agent-resolved attacks and their one-shot launch/impact Burst FX.
+- `skills/massbattle-projectile-authoring`: authors projectile-owned travel, collision, damage, lifecycle, Attached flight FX, and Burst lifecycle FX.
+- `skills/massbattle-unit-authoring`: creates and edits MassBattle units, then links validated direct-attack or projectile configurations into unit arrays.
+
+There is only one meaning of Niagara batch conversion in these skills:
+
+`BatchE([C0, C1, ..., Cn]) == [E(C0), E(C1), ..., E(Cn)]`
+
+The source effect's visual graph remains the effect. The conversion replaces per-unit spawn/transform scheduling with MassBattleFrame Burst NDC or Attached array input. GPU simulation, pooling, template duplication, renderer CDO edits, or setting `SubType` alone are not batch conversion. Instant versus projectile is a gameplay-ownership decision; both routes use this same Niagara conversion contract.
 
 Install to local Codex:
 
 ```powershell
 Copy-Item -Recurse -Force .\skills\massbattle-unit-authoring $env:USERPROFILE\.codex\skills\
 Copy-Item -Recurse -Force .\skills\massbattle-effect-mcp $env:USERPROFILE\.codex\skills\
+Copy-Item -Recurse -Force .\skills\massbattle-instant-damage-fx $env:USERPROFILE\.codex\skills\
+Copy-Item -Recurse -Force .\skills\massbattle-projectile-authoring $env:USERPROFILE\.codex\skills\
 ```
 
 If `CODEX_HOME` is set, copy them to `$env:CODEX_HOME\skills\`.
@@ -53,7 +63,7 @@ MCP is the editor tool interface. For unit authoring, the default AI-facing path
 
 MassBattleEditorMCP has two Codex-facing layers:
 
-1. A local TCP bridge inside the UE editor plugin, listening on `127.0.0.1:55558` by default.
+1. A local TCP bridge inside the UE editor plugin, listening on `127.0.0.1:55258` by default.
 2. `Resources/Python/MassBattleMcpServer.py`, a STDIO MCP server that forwards Codex tool calls to the UE bridge.
 
 Install to Codex:
@@ -69,7 +79,7 @@ Quickly check the installation and UE bridge:
 ```
 
 After installation, restart Codex or start a new session. The UE editor must also load this plugin before the bridge starts listening.
-After successful installation, you should see `massbattle-editor-mcp` and be able to call primitive tools such as `unit_get`, `unit_create`, `unit_write`, `unit_delete`, `editor_apply_create_vat_unit_from_selection`, `effect_asset_read_summary`, `niagara_set_module_pin`, `batch_fx_read_renderer_defaults`, and `batch_fx_set_renderer_defaults`.
+After successful installation, you should see `massbattle-editor-mcp` and be able to call primitive tools such as `unit_get`, `unit_create`, `projectile_get`, `projectile_write`, `projectile_validate`, `editor_apply_create_vat_unit_from_selection`, `effect_asset_read_summary`, `niagara_set_module_pin`, `batch_fx_read_renderer_defaults`, and `batch_fx_set_renderer_defaults`.
 
 Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values include `None`, `Appearing`, `Sleeping`, `Patrolling`, `Attacking`, `Hit`, and `Dying`. Hit FX should use `Hit`; do not write the runtime flag name `BeingHit` into this field.
 
@@ -81,14 +91,26 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Connection / diagnostics | `unit_get_api_status` | Available | Read Unit MCP capabilities. |
 | Connection / diagnostics | `effect_asset_get_api_status` | Available | Read Effect Asset / Batch FX MCP capabilities. |
 | Connection / diagnostics | `niagara_get_api_status` | Available | Read Niagara MCP capabilities. |
+| Connection / diagnostics | `projectile_get_api_status` | Available | Read Projectile DataAsset CRUD, schema, and validation capabilities. |
 | Unit MCP | `unit_list` | Available | List `MassBattleAgentConfigDataAsset` unit config assets. |
 | Unit MCP | `unit_get` | Available | Read one unit config with simple/full views and default filtering. |
 | Unit MCP | `unit_get_schema` | Available | Read editable unit fields, types, roles, and tooltips. |
 | Unit MCP | `unit_export` | Available | Export compact unit balance tables for analysis or batch review. |
 | Unit MCP | `unit_find_assets` | Available | Find candidate SkeletalMesh, Renderer, Niagara, and related assets for unit authoring. |
 | Unit MCP | `unit_create` | Available | Create a new unit; use the default template when no template is provided; optional initial unit data is supported. |
+| Unit MCP | `unit_plan_write` | Available | Plan a union-write and return a reviewable diff without mutating the unit. |
+| Unit MCP | `unit_preview_plan` | Available | Read a saved unit mutation plan and its complete diff. |
+| Unit MCP | `unit_apply_plan` | Available | Apply a reviewed unit mutation plan and optionally save the unit. |
 | Unit MCP | `unit_write` | Available | Union-write partial source-aligned JSON to an existing unit; omitted fields stay unchanged. |
 | Unit MCP | `unit_delete` | Available | Explicitly delete or soft-delete a unit; dry-run by default. |
+| Projectile MCP | `projectile_list` | Available | List `MassBattleProjectileConfigDataAsset` assets under selected roots. |
+| Projectile MCP | `projectile_query` | Available | Query projectile configs by path or name. |
+| Projectile MCP | `projectile_get` | Available | Read one projectile in active-only or complete source-aligned form. |
+| Projectile MCP | `projectile_get_schema` | Available | Read projectile fields, enum values, edit conditions, and write rules. |
+| Projectile MCP | `projectile_create` | Available | Create a projectile from class defaults or an existing template after transient validation. |
+| Projectile MCP | `projectile_write` | Available | Union-write a partial projectile patch; array append/replace must be explicit and validation runs before mutation. |
+| Projectile MCP | `projectile_validate` | Available | Validate movement, damage ownership, triggers, lifecycle FX, linked units, and duplicate explosions. |
+| Projectile MCP | `projectile_delete` | Available | Plan or execute guarded soft/hard deletion; dry-run by default. |
 | Style MCP | `style_summarize_units` | Available | Summarize unit assets by style, family, and path category. |
 | Style MCP | `style_plan_organize_units` | Available | Plan style-based unit folder organization without moving assets. |
 | Unit Editor MCP | `editor_get_status` | Available | Read unit editor workflow capabilities. |
@@ -123,7 +145,9 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Batch FX MCP | `batch_fx_read_renderer_defaults` | Available | Read `AMassBattleFxRenderer` Blueprint defaults inherited by newly placed actors. |
 | Batch FX MCP | `batch_fx_set_renderer_defaults` | Available | Set `AMassBattleFxRenderer` Blueprint defaults, including `NiagaraSystemAsset`, `NDC_BurstFx`, `SubType`, batch size, and pooling cooldown. |
 
-For source-faithful batch translation, duplicate the exact source Niagara, prove the duplicate with `niagara_compare_systems(mode=exact)`, add only the Mass Battle protocol adapter, and validate again with `mode=translation`. Exact mode defaults to structural identity plus compile-error checks because an unsaved duplicate may not have entered Niagara's compile queue yet; the graph-edit barrier and translation mode enforce runtime readiness before save. A template-based recreation is a separate optional optimized artifact and must not be reported as a faithful mapping. After translation, verify renderer Blueprint defaults, place the renderer in a test level, and use Unit MCP to write `FFxConfig` into arrays such as `Hit.SpawnFx`, `Death.SpawnFx`, and `Attack.SpawnFx`.
+For source-faithful batch translation, duplicate the exact source Niagara, prove the duplicate with `niagara_compare_systems(mode=exact)`, add only the MassBattleFrame protocol adapter, and validate again with `mode=translation`. Exact mode defaults to structural identity plus compile-error checks because an unsaved duplicate may not have entered Niagara's compile queue yet; the graph-edit barrier and translation mode enforce runtime readiness before save. A template-based recreation is a separate optional optimized artifact and must not be reported as a faithful mapping. After translation, verify renderer Blueprint defaults, use available level-editing tools to place the renderer in a test level, and route the effect through Unit or Projectile MCP. Do not hand level setup back to the user when an editor tool can perform it.
+
+Direct attacks and projectiles must not both own the same damage. A normal projectile-owned attack disables the agent's hit-time damage and lets the projectile DataAsset own travel, collision, damage, and lifecycle. Validation also rejects identical enabled `OnHit.SpawnFx` and `OnRemoval.SpawnFx` arrays, because both callbacks can run in one simulation tick and otherwise emit the same explosion twice.
 
 The Python bridge uses a short 5-second connection timeout and a separate 600-second command-response timeout. The Unreal bridge also waits up to 600 seconds for game-thread work by default; launch with `-MassBattleMCPGameThreadTimeoutSeconds=N` or pass `GameThreadTimeoutSeconds` in command params to choose a value from 30 to 3600 seconds. If that limit is reached, the editor task may still finish, so read the target back before retrying.
 
