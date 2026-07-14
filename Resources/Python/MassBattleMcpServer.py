@@ -383,6 +383,37 @@ async def editor_apply_create_vat_unit_from_selection(
 
 
 @mcp.tool()
+async def editor_inspect_actor_assembly(actor_path: str, options: Any = None) -> Dict[str, Any]:
+    """Inspect an Actor's modular skeletal/static meshes, effective materials, and resolved weapon bind bones without writing assets."""
+    return await get_connection().send_command(
+        "MCP_EditorInspectActorAssembly",
+        {"ActorPath": actor_path, "OptionsJson": _json_arg(options)},
+    )
+
+
+@mcp.tool()
+async def editor_plan_create_vat_unit_from_actor(spec: Any) -> Dict[str, Any]:
+    """Plan Actor component assembly followed by strict VAT unit authoring without writing assets."""
+    return await get_connection().send_command(
+        "MCP_EditorPlanCreateVatUnitFromActor",
+        {"SpecJson": _json_arg(spec)},
+    )
+
+
+@mcp.tool()
+async def editor_apply_create_vat_unit_from_actor(
+    spec: Any,
+    save_assets: bool = True,
+    compact_response: bool = True,
+) -> Dict[str, Any]:
+    """Assemble an Actor and configured weapon into an animation-compatible SkeletalMesh, then author its strict VAT unit."""
+    return await get_connection().send_command(
+        "MCP_EditorApplyCreateVatUnitFromActor",
+        {"SpecJson": _json_arg_with_defaults(spec, {"compact_response": compact_response}), "bSaveAssets": save_assets},
+    )
+
+
+@mcp.tool()
 async def editor_plan_organize_unit_assets(unit_path: str, options: Any = None) -> Dict[str, Any]:
     """Plan moving a MassBattle unit and linked generated/source assets into the selected style layout."""
     return await get_connection().send_command(

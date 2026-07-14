@@ -22,6 +22,8 @@
 #include "MassBattleFuncLibEd.h"
 #include "MassBattleUnitMCPApi.h"
 #include "MaterialEditingLibrary.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionTextureBase.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
@@ -457,7 +459,12 @@ static bool AssetExists(const FString& ObjectPath)
 		return true;
 	}
 
-	return FSoftObjectPath(AssetPath).TryLoad() != nullptr;
+	// The commandlet can query before the asset registry finishes indexing plugin
+	// content, so also check the package on disk. Do not use TryLoad(): loading a
+	// missing package can leave an empty UPackage behind and make MassBattle's
+	// DuplicateClassAsset report that a not-yet-created Blueprint already exists.
+	const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+	return !PackageName.IsEmpty() && FPackageName::DoesPackageExist(PackageName);
 }
 
 static bool SaveAssetByPath(const FString& ObjectPath, FString& OutError)
@@ -518,158 +525,6 @@ static bool HasMaterialOverrides(const TSharedPtr<FJsonObject>& Spec)
 		&& Spec->TryGetArrayField(TEXT("material_overrides"), Overrides)
 		&& Overrides
 		&& !Overrides->IsEmpty();
-}
-
-static FString ApplyStaticMeshMaterialOverrides(const FString& StaticMeshPath, const TSharedPtr<FJsonObject>& Spec)
-{
-	TSharedPtr<FJsonObject> Root = MakeSuccess();
-	Root->SetStringField(TEXT("static_mesh"), StaticMeshPath);
-	Root->SetNumberField(TEXT("applied_count"), 0);
-
-	const TArray<TSharedPtr<FJsonValue>>* Overrides = nullptr;
-	if (!Spec.IsValid() || !Spec->TryGetArrayField(TEXT("material_overrides"), Overrides) || !Overrides || Overrides->IsEmpty())
-	{
-		Root->SetBoolField(TEXT("applied"), false);
-		return ToJsonString(Root);
-	}
-
-	UStaticMesh* Mesh = Cast<UStaticMesh>(FSoftObjectPath(EnsureObjectPath(StaticMeshPath)).TryLoad());
-	if (!Mesh)
-	{
-		return MakeErrorJson(FString::Printf(TEXT("Failed to load StaticMesh for material_overrides: %s"), *StaticMeshPath));
-	}
-
-	TArray<TSharedPtr<FJsonValue>> Applied;
-	TArray<TSharedPtr<FJsonValue>> Issues;
-	int32 NextSequentialSlot = 0;
-
-	auto AddIssueObject = [&Issues](const FString& Code, const FString& Message)
-	{
-		TSharedPtr<FJsonObject> Issue = MakeShared<FJsonObject>();
-		Issue->SetStringField(TEXT("code"), Code);
-		Issue->SetStringField(TEXT("message"), Message);
-		Issues.Add(MakeShared<FJsonValueObject>(Issue));
-	};
-
-	auto ApplyToSlot = [&Applied, &AddIssueObject, Mesh](int32 SlotIndex, const FString& MaterialPath) -> bool
-	{
-		if (SlotIndex < 0 || SlotIndex >= Mesh->GetStaticMaterials().Num())
-		{
-			AddIssueObject(TEXT("slot_index_out_of_range"), FString::Printf(TEXT("slot_index %d is outside StaticMesh material slot range."), SlotIndex));
-			return false;
-		}
-
-		if (MaterialPath.IsEmpty())
-		{
-			AddIssueObject(TEXT("missing_material"), FString::Printf(TEXT("material path is missing for slot_index %d."), SlotIndex));
-			return false;
-		}
-
-		UMaterialInterface* Material = Cast<UMaterialInterface>(FSoftObjectPath(EnsureObjectPath(MaterialPath)).TryLoad());
-		if (!Material)
-		{
-			AddIssueObject(TEXT("material_not_found"), FString::Printf(TEXT("material does not exist or failed to load: %s"), *MaterialPath));
-			return false;
-		}
-
-		const FString SlotName = Mesh->GetStaticMaterials()[SlotIndex].MaterialSlotName.ToString();
-		Mesh->SetMaterial(SlotIndex, Material);
-
-		TSharedPtr<FJsonObject> AppliedItem = MakeShared<FJsonObject>();
-		AppliedItem->SetNumberField(TEXT("slot_index"), SlotIndex);
-		AppliedItem->SetStringField(TEXT("slot_name"), SlotName);
-		AppliedItem->SetStringField(TEXT("material"), Material->GetPathName());
-		Applied.Add(MakeShared<FJsonValueObject>(AppliedItem));
-		return true;
-	};
-
-	for (const TSharedPtr<FJsonValue>& OverrideValue : *Overrides)
-	{
-		if (!OverrideValue.IsValid())
-		{
-			AddIssueObject(TEXT("invalid_override"), TEXT("material_overrides contains an invalid JSON value."));
-			continue;
-		}
-
-		if (OverrideValue->Type == EJson::String)
-		{
-			if (ApplyToSlot(NextSequentialSlot, OverrideValue->AsString()))
-			{
-				++NextSequentialSlot;
-			}
-			continue;
-		}
-
-		if (OverrideValue->Type != EJson::Object)
-		{
-			AddIssueObject(TEXT("invalid_override_type"), TEXT("material_overrides items must be strings or objects."));
-			continue;
-		}
-
-		TSharedPtr<FJsonObject> OverrideObject = OverrideValue->AsObject();
-		FString MaterialPath = StringFieldOrDefault(OverrideObject, TEXT("material"), FString());
-		MaterialPath = StringFieldOrDefault(OverrideObject, TEXT("material_path"), MaterialPath);
-		MaterialPath = StringFieldOrDefault(OverrideObject, TEXT("material_interface"), MaterialPath);
-
-		double SlotIndexNumber = 0.0;
-		if (OverrideObject->TryGetNumberField(TEXT("slot_index"), SlotIndexNumber))
-		{
-			if (ApplyToSlot(static_cast<int32>(SlotIndexNumber), MaterialPath))
-			{
-				NextSequentialSlot = FMath::Max(NextSequentialSlot, static_cast<int32>(SlotIndexNumber) + 1);
-			}
-			continue;
-		}
-
-		FString SlotName;
-		const bool bHasExactSlotName = OverrideObject->TryGetStringField(TEXT("slot_name"), SlotName) && !SlotName.IsEmpty();
-		FString SlotNameContains;
-		const bool bHasSlotNameContains = OverrideObject->TryGetStringField(TEXT("slot_name_contains"), SlotNameContains) && !SlotNameContains.IsEmpty();
-		if (bHasExactSlotName || bHasSlotNameContains)
-		{
-			bool bMatched = false;
-			const TArray<FStaticMaterial>& StaticMaterials = Mesh->GetStaticMaterials();
-			for (int32 SlotIndex = 0; SlotIndex < StaticMaterials.Num(); ++SlotIndex)
-			{
-				const FString CurrentSlotName = StaticMaterials[SlotIndex].MaterialSlotName.ToString();
-				const bool bExactMatch = bHasExactSlotName && CurrentSlotName.Equals(SlotName, ESearchCase::IgnoreCase);
-				const bool bContainsMatch = bHasSlotNameContains && CurrentSlotName.Contains(SlotNameContains, ESearchCase::IgnoreCase);
-				if (bExactMatch || bContainsMatch)
-				{
-					bMatched |= ApplyToSlot(SlotIndex, MaterialPath);
-				}
-			}
-
-			if (!bMatched)
-			{
-				AddIssueObject(TEXT("slot_name_not_found"), FString::Printf(TEXT("No material slot matched slot_name='%s' slot_name_contains='%s'."), *SlotName, *SlotNameContains));
-			}
-			continue;
-		}
-
-		if (ApplyToSlot(NextSequentialSlot, MaterialPath))
-		{
-			++NextSequentialSlot;
-		}
-	}
-
-	const bool bHadIssues = !Issues.IsEmpty();
-	if (!Applied.IsEmpty())
-	{
-		Mesh->PostEditChange();
-		Mesh->MarkPackageDirty();
-	}
-
-	Root->SetBoolField(TEXT("success"), !bHadIssues);
-	Root->SetBoolField(TEXT("applied"), !Applied.IsEmpty());
-	Root->SetNumberField(TEXT("applied_count"), Applied.Num());
-	Root->SetArrayField(TEXT("applied_overrides"), Applied);
-	Root->SetArrayField(TEXT("issues"), Issues);
-	if (bHadIssues)
-	{
-		Root->SetStringField(TEXT("error"), TEXT("One or more material_overrides could not be applied."));
-	}
-	return ToJsonString(Root);
 }
 
 static FString StringFieldOrDefault(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, const FString& DefaultValue)
@@ -1712,6 +1567,72 @@ static UTexture2D* FindUsedTexture2D(UMaterialInterface* Material, const TArray<
 
 	TArray<UTexture*> UsedTextures = UMaterialEditingLibrary::GetMaterialUsedTextures(Material);
 	TArray<UTexture2D*> UsedTexture2Ds;
+	TArray<UTexture2D*> DirectSourceTextures;
+	for (UObject* ReferencedTexture : Material->GetReferencedTextures())
+	{
+		if (UTexture2D* Texture2D = Cast<UTexture2D>(ReferencedTexture))
+		{
+			UsedTexture2Ds.AddUnique(Texture2D);
+		}
+	}
+	if (UMaterial* BaseMaterial = Material->GetMaterial())
+	{
+		TArray<UMaterialExpressionTextureBase*> TextureExpressions;
+		BaseMaterial->GetAllExpressionsInMaterialAndFunctionsOfType(TextureExpressions);
+		for (UMaterialExpressionTextureBase* TextureExpression : TextureExpressions)
+		{
+			if (TextureExpression)
+			{
+				if (UTexture2D* Texture2D = Cast<UTexture2D>(TextureExpression->Texture))
+				{
+					DirectSourceTextures.AddUnique(Texture2D);
+				}
+			}
+		}
+	}
+
+	// Editor commandlets can load a material before its expression collection is
+	// available. Package dependencies remain deterministic and provide a second
+	// source-faithful route to directly referenced Texture2D assets.
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	TArray<FName> DependencyPackages;
+	TArray<FName> SoftDependencyPackages;
+	AssetRegistry.GetDependencies(Material->GetOutermost()->GetFName(), DependencyPackages,
+		UE::AssetRegistry::EDependencyCategory::Package, UE::AssetRegistry::EDependencyQuery::Hard);
+	AssetRegistry.GetDependencies(Material->GetOutermost()->GetFName(), SoftDependencyPackages,
+		UE::AssetRegistry::EDependencyCategory::Package, UE::AssetRegistry::EDependencyQuery::Soft);
+	DependencyPackages.Append(SoftDependencyPackages);
+	for (const FName DependencyPackage : DependencyPackages)
+	{
+		TArray<FAssetData> DependencyAssets;
+		AssetRegistry.GetAssetsByPackageName(DependencyPackage, DependencyAssets);
+		for (const FAssetData& DependencyAsset : DependencyAssets)
+		{
+			if (DependencyAsset.AssetClassPath == UTexture2D::StaticClass()->GetClassPathName())
+			{
+				if (UTexture2D* Texture2D = Cast<UTexture2D>(DependencyAsset.GetAsset()))
+				{
+					DirectSourceTextures.AddUnique(Texture2D);
+				}
+			}
+		}
+	}
+
+	for (UTexture2D* Texture2D : DirectSourceTextures)
+	{
+		if (TextureNameMatchesAnyToken(Texture2D, NameTokens))
+		{
+			return Texture2D;
+		}
+	}
+	if (bAllowSingleTextureFallback && DirectSourceTextures.Num() == 1)
+	{
+		return DirectSourceTextures[0];
+	}
+	for (UTexture2D* Texture2D : DirectSourceTextures)
+	{
+		UsedTexture2Ds.AddUnique(Texture2D);
+	}
 	for (UTexture* UsedTexture : UsedTextures)
 	{
 		if (UTexture2D* Texture2D = AsTexture2D(UsedTexture))
@@ -1848,6 +1769,139 @@ static int32 EnrichOriginalTexturesFromSkeletalMaterials(
 		}
 	}
 
+	return FilledCount;
+}
+
+static int32 EnrichOriginalTexturesFromMaterialOverrides(
+	const TSharedPtr<FJsonObject>& Spec,
+	TArray<FOriginalTextures>& OriginalTextures,
+	TArray<TSharedPtr<FJsonValue>>& Warnings)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Overrides = nullptr;
+	if (!Spec.IsValid() || !Spec->TryGetArrayField(TEXT("material_overrides"), Overrides) || !Overrides)
+	{
+		return 0;
+	}
+
+	int32 FilledCount = 0;
+	int32 NextSequentialSlot = 0;
+	auto ApplyMaterialToSlot = [&](int32 SlotIndex, UMaterialInterface* SourceMaterial)
+	{
+		if (!SourceMaterial || SlotIndex < 0)
+		{
+			return;
+		}
+		while (OriginalTextures.Num() <= SlotIndex)
+		{
+			OriginalTextures.AddDefaulted();
+		}
+
+		FOriginalTextures& TextureSet = OriginalTextures[SlotIndex];
+		if (TextureSet.SlotName.IsEmpty())
+		{
+			TextureSet.SlotName = FString::Printf(TEXT("Slot_%d"), SlotIndex);
+		}
+
+		TArray<FString> FilledFields;
+		auto ReplaceFromSource = [&](TObjectPtr<UTexture2D>& Target, const FString& FieldName, const TArray<FName>& ParameterNames, const TArray<FString>& NameTokens, bool bAllowSingleTextureFallback)
+		{
+			if (UTexture2D* ResolvedTexture = ResolveSourceMaterialTexture2D(SourceMaterial, ParameterNames, NameTokens, bAllowSingleTextureFallback))
+			{
+				Target = ResolvedTexture;
+				FilledFields.Add(FString::Printf(TEXT("%s=%s"), *FieldName, *ResolvedTexture->GetPathName()));
+				++FilledCount;
+			}
+		};
+
+		ReplaceFromSource(TextureSet.BaseColor, TEXT("BaseColor"),
+			{ TEXT("BaseColorTex"), TEXT("BaseColorTexture"), TEXT("baseColorTexture"), TEXT("BaseColor"), TEXT("Albedo"), TEXT("Diffuse"), TEXT("DiffuseTex"), TEXT("ColorTex"), TEXT("Texture") },
+			{ TEXT("BaseColor"), TEXT("Base_Color"), TEXT("Albedo"), TEXT("Diffuse"), TEXT("_D"), TEXT("_BC"), TEXT("Color") }, true);
+		ReplaceFromSource(TextureSet.Normal, TEXT("Normal"),
+			{ TEXT("NormalTex"), TEXT("NormalTexture"), TEXT("normalTexture"), TEXT("Normal"), TEXT("NormalMap") },
+			{ TEXT("Normal"), TEXT("_N"), TEXT("_Nor") }, false);
+		ReplaceFromSource(TextureSet.Roughness, TEXT("Roughness"),
+			{ TEXT("RoughnessTex"), TEXT("RoughnessTexture"), TEXT("roughnessTexture"), TEXT("Roughness") },
+			{ TEXT("Roughness"), TEXT("_R"), TEXT("_Rough") }, false);
+		ReplaceFromSource(TextureSet.Metallic, TEXT("Metallic"),
+			{ TEXT("MetallicTex"), TEXT("MetallicTexture"), TEXT("metallicTexture"), TEXT("Metallic") },
+			{ TEXT("Metallic"), TEXT("_M"), TEXT("_Metal") }, false);
+		ReplaceFromSource(TextureSet.ARM, TEXT("ARM"),
+			{ TEXT("ARMTex"), TEXT("ARMTexture"), TEXT("OcclusionRoughnessMetallic"), TEXT("ORM"), TEXT("metallicRoughnessTexture") },
+			{ TEXT("_ARM"), TEXT("_ORM"), TEXT("_MRA"), TEXT("MetallicRoughness") }, false);
+		TextureSet.bUseARM = TextureSet.ARM != nullptr;
+		ReplaceFromSource(TextureSet.Specular, TEXT("Specular"),
+			{ TEXT("SpecularTex"), TEXT("SpecularTexture"), TEXT("Specular") },
+			{ TEXT("Specular"), TEXT("_S"), TEXT("_Spec") }, false);
+		ReplaceFromSource(TextureSet.Emissive, TEXT("Emissive"),
+			{ TEXT("EmissiveTex"), TEXT("EmissiveTexture"), TEXT("emissiveTexture"), TEXT("Emissive") },
+			{ TEXT("Emissive"), TEXT("_E"), TEXT("_Emiss") }, false);
+		ReplaceFromSource(TextureSet.Opacity, TEXT("Opacity"),
+			{ TEXT("OpacityTex"), TEXT("OpacityTexture"), TEXT("AlphaTexture"), TEXT("opacityTexture"), TEXT("Opacity"), TEXT("Alpha") },
+			{ TEXT("Opacity"), TEXT("_O"), TEXT("_Mask"), TEXT("_Trans"), TEXT("Alpha") }, false);
+		ReplaceFromSource(TextureSet.AO, TEXT("AO"),
+			{ TEXT("AOTex"), TEXT("AOTexture"), TEXT("OcclusionTexture"), TEXT("occlusionTexture"), TEXT("AmbientOcclusion") },
+			{ TEXT("_AO"), TEXT("AmbientOcclusion"), TEXT("Occlusion") }, false);
+
+		AddIssue(Warnings, TEXT("warning"), TEXT("material_override_used_as_texture_source"),
+			FString::Printf(TEXT("Source material %s populated VAT texture inputs for slot %d (%s). The generated VAT material instance remains assigned."),
+				*SourceMaterial->GetPathName(), SlotIndex, FilledFields.IsEmpty() ? TEXT("no texture parameters resolved") : *FString::Join(FilledFields, TEXT(", "))),
+			TEXT("material_overrides"));
+	};
+
+	for (const TSharedPtr<FJsonValue>& OverrideValue : *Overrides)
+	{
+		FString MaterialPath;
+		TSharedPtr<FJsonObject> OverrideObject;
+		if (OverrideValue.IsValid() && OverrideValue->Type == EJson::String)
+		{
+			MaterialPath = OverrideValue->AsString();
+		}
+		else if (OverrideValue.IsValid() && OverrideValue->Type == EJson::Object)
+		{
+			OverrideObject = OverrideValue->AsObject();
+			MaterialPath = StringFieldOrDefault(OverrideObject, TEXT("material"), FString());
+			MaterialPath = StringFieldOrDefault(OverrideObject, TEXT("material_path"), MaterialPath);
+			MaterialPath = StringFieldOrDefault(OverrideObject, TEXT("material_interface"), MaterialPath);
+		}
+
+		UMaterialInterface* SourceMaterial = Cast<UMaterialInterface>(FSoftObjectPath(EnsureObjectPath(MaterialPath)).TryLoad());
+		if (!SourceMaterial)
+		{
+			continue;
+		}
+
+		if (OverrideObject.IsValid())
+		{
+			double SlotIndexNumber = 0.0;
+			if (OverrideObject->TryGetNumberField(TEXT("slot_index"), SlotIndexNumber))
+			{
+				const int32 SlotIndex = static_cast<int32>(SlotIndexNumber);
+				ApplyMaterialToSlot(SlotIndex, SourceMaterial);
+				NextSequentialSlot = FMath::Max(NextSequentialSlot, SlotIndex + 1);
+				continue;
+			}
+
+			FString SlotName;
+			FString SlotNameContains;
+			OverrideObject->TryGetStringField(TEXT("slot_name"), SlotName);
+			OverrideObject->TryGetStringField(TEXT("slot_name_contains"), SlotNameContains);
+			if (!SlotName.IsEmpty() || !SlotNameContains.IsEmpty())
+			{
+				for (int32 SlotIndex = 0; SlotIndex < OriginalTextures.Num(); ++SlotIndex)
+				{
+					const bool bExact = !SlotName.IsEmpty() && OriginalTextures[SlotIndex].SlotName.Equals(SlotName, ESearchCase::IgnoreCase);
+					const bool bContains = !SlotNameContains.IsEmpty() && OriginalTextures[SlotIndex].SlotName.Contains(SlotNameContains, ESearchCase::IgnoreCase);
+					if (bExact || bContains)
+					{
+						ApplyMaterialToSlot(SlotIndex, SourceMaterial);
+					}
+				}
+				continue;
+			}
+		}
+
+		ApplyMaterialToSlot(NextSequentialSlot++, SourceMaterial);
+	}
 	return FilledCount;
 }
 
@@ -4962,7 +5016,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("convert_mesh"), TEXT("MCP_ConvertSkeletalMeshToStaticMeshWithLODs"), SkeletalMeshPath.IsEmpty() ? TEXT("blocked") : TEXT("planned"), TEXT("Convert the source skeletal mesh into the planned MassBattle static mesh asset."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_materials"), TEXT("MCP_CreateMaterialInstanceForStaticMeshWithLODs"), ParentMaterialPath.IsEmpty() ? TEXT("blocked") : TEXT("planned"), TEXT("Create material instances for the generated static mesh LOD material slots."));
-	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("apply_material_overrides"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), MassBattleUnitEditorMCP::HasMaterialOverrides(Spec) ? TEXT("planned") : TEXT("skipped"), TEXT("Optionally override generated StaticMesh material slots with explicit materials."));
+	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("resolve_material_texture_sources"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), MassBattleUnitEditorMCP::HasMaterialOverrides(Spec) ? TEXT("planned") : TEXT("skipped"), TEXT("Use explicit source materials to populate VAT texture inputs while preserving generated VAT material instances."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_vat_data_and_textures"), TEXT("MassBattleTools.CreateDataAsset/CreateVATTextures"), TEXT("planned"), TEXT("Create or reuse AnimToTextureDataAsset and VAT Texture2D assets."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("bake_vat_textures"), TEXT("UAnimToTextureBPLibrary.AnimationToTexture"), TEXT("planned"), TEXT("Bake animation frames into VAT textures using the MassBattleTools DoAll flow."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("update_vat_materials"), TEXT("UAnimToTextureBPLibrary.UpdateMaterialInstanceFromDataAsset"), TEXT("planned"), TEXT("Write baked VAT and AnimData texture parameters into generated material instances."));
@@ -5193,11 +5247,11 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 				}
 			}
 		}
-		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("apply_material_overrides"), bMaterialOverridesValid ? TEXT("would_run") : TEXT("blocked"), FString::Printf(TEXT("%d material override(s) supplied."), ValidOverrideCount));
+		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("resolve_material_texture_sources"), bMaterialOverridesValid ? TEXT("would_run") : TEXT("blocked"), FString::Printf(TEXT("%d source material(s) supplied for VAT texture inheritance."), ValidOverrideCount));
 	}
 	else
 	{
-		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("apply_material_overrides"), TEXT("skipped"), TEXT("No material_overrides were supplied."));
+		MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("resolve_material_texture_sources"), TEXT("skipped"), TEXT("No material_overrides were supplied."));
 	}
 
 	const bool bBakeVat = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") }, true);
@@ -5496,6 +5550,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		if (MassBattleUnitEditorMCP::ParseOriginalTexturesJson(OriginalTexturesJson, OriginalTexturesArray))
 		{
 			InheritedTextureCount = MassBattleUnitEditorMCP::EnrichOriginalTexturesFromSkeletalMaterials(SkeletalMeshPath, OriginalTexturesArray, TextureInheritanceWarnings);
+			InheritedTextureCount += MassBattleUnitEditorMCP::EnrichOriginalTexturesFromMaterialOverrides(Spec, OriginalTexturesArray, TextureInheritanceWarnings);
 			OriginalTexturesJson = MassBattleUnitEditorMCP::SerializeOriginalTexturesJson(OriginalTexturesArray);
 		}
 
@@ -5518,25 +5573,14 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		Step->SetStringField(TEXT("status"), TEXT("done"));
 	}
 
-	if (MassBattleUnitEditorMCP::HasMaterialOverrides(Spec))
-	{
-		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("apply_material_overrides"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), TEXT("running"), TEXT("Applying explicit material overrides to the generated StaticMesh."));
-		const FString OverrideResult = MassBattleUnitEditorMCP::ApplyStaticMeshMaterialOverrides(StaticMeshPath, Spec);
-		MassBattleUnitEditorMCP::SetStepResult(Step, OverrideResult);
-		TSharedPtr<FJsonObject> OverrideJson = MassBattleUnitEditorMCP::ParseObject(OverrideResult);
-		if (!OverrideJson.IsValid() || !OverrideJson->GetBoolField(TEXT("success")))
-		{
-			Step->SetStringField(TEXT("status"), TEXT("failed"));
-			Root->SetBoolField(TEXT("success"), false);
-			Root->SetArrayField(TEXT("execution_steps"), ExecutionSteps);
-			return MassBattleUnitEditorMCP::ToJsonString(Root);
-		}
-		Step->SetStringField(TEXT("status"), TEXT("done"));
-	}
-	else
-	{
-		MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("apply_material_overrides"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), TEXT("skipped"), TEXT("No material_overrides were supplied."));
-	}
+	MassBattleUnitEditorMCP::AddExecutionStep(
+		ExecutionSteps,
+		TEXT("preserve_vat_material_instances"),
+		TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"),
+		TEXT("done"),
+		MassBattleUnitEditorMCP::HasMaterialOverrides(Spec)
+			? TEXT("Source material overrides were consumed as texture inputs; generated VAT material instances remain assigned.")
+			: TEXT("Generated VAT material instances remain assigned."));
 
 	const bool bBakeVat = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") }, true);
 	bool bVatBakeCompleted = false;
@@ -6157,6 +6201,9 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorGetStatus()
 	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnit"), TEXT("unit_editor.create"), TEXT("Primary non-selection DoAll-equivalent VAT unit authoring entry. Requires canonical complete inputs and validates before writing assets.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: infer the DoAll spec from current selection or selected_assets and return it for review.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Primary one-click current selection -> generate entry matching the MassBattleTools DoAll workflow.")));
+	Tools.Add(Tool(TEXT("MCP_EditorInspectActorAssembly"), TEXT("unit_editor.actor"), TEXT("Inspect an Actor's modular skeletal/static component assembly and resolved weapon bind bones.")));
+	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromActor"), TEXT("unit_editor.actor"), TEXT("Plan Actor component assembly followed by strict VAT unit authoring.")));
+	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromActor"), TEXT("unit_editor.actor"), TEXT("Assemble an Actor and its configured weapon into one animation-compatible SkeletalMesh, then author the VAT unit.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Plan moving a unit and its editor-generated linked assets into the selected style layout.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Apply a reviewed linked-asset organization plan; dry_run=true by default.")));
 

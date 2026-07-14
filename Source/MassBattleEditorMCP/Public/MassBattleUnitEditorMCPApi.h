@@ -80,6 +80,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
 	static FString MCP_EditorApplyCreateVatUnitFromSelection(const FString& OptionsJson, bool bSaveAssets);
 
+	/** Inspect the renderable skeletal/static component assembly produced by an Actor class and optional component overrides. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
+	static FString MCP_EditorInspectActorAssembly(const FString& ActorPath, const FString& OptionsJson);
+
+	/** Plan Actor component assembly followed by the strict VAT unit authoring workflow without writing assets. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
+	static FString MCP_EditorPlanCreateVatUnitFromActor(const FString& SpecJson);
+
+	/** Assemble an Actor into an animation-compatible SkeletalMesh, then execute the strict VAT unit authoring workflow. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
+	static FString MCP_EditorApplyCreateVatUnitFromActor(const FString& SpecJson, bool bSaveAssets);
+
 	/** Plan moving a unit and its MassBattle editor-generated linked assets into the selected style layout. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
 	static FString MCP_EditorPlanOrganizeUnitAssets(const FString& UnitPath, const FString& OptionsJson);
