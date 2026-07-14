@@ -119,6 +119,9 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 | Unit Editor MCP | `editor_apply_create_vat_unit` | 可用 | 非 selection 的主生成入口，等价 DoAll；先验证完整 canonical 输入，再执行网格转换、VAT 材质创建、VAT 烘焙、Renderer 复制、单位配置创建或合并。 |
 | Unit Editor MCP | `editor_plan_create_vat_unit_from_selection` | 诊断 | 从当前编辑器选择或 `selected_assets` 推导 DoAll spec，并返回可审查计划。 |
 | Unit Editor MCP | `editor_apply_create_vat_unit_from_selection` | 可用 | AI 使用的“获取当前，生成”一键主入口。 |
+| Unit Editor MCP | `editor_inspect_actor_assembly` | 可用 | 无写入检查 Actor 的模块化骨骼/静态组件、有效材质、Socket 变换和武器绑定骨骼。 |
+| Unit Editor MCP | `editor_plan_create_vat_unit_from_actor` | 诊断 | 验证 Actor 组件/武器覆盖配方，预览持久化组合 SkeletalMesh 与严格 VAT 单位计划。 |
+| Unit Editor MCP | `editor_apply_create_vat_unit_from_actor` | 可用 | 把 Actor 与刚性绑定的静态武器组合为可动画的持久化 SkeletalMesh，再执行严格的 DoAll 等价 VAT 工作流。 |
 | Unit Editor MCP | `editor_plan_organize_unit_assets` | 可用 | 计划把一个单位和关联生成资产移动到风格化目录。 |
 | Unit Editor MCP | `editor_apply_organize_unit_assets` | 可用 | 应用已审核的单位资产整理计划；默认可 dry-run。 |
 | Effect Asset MCP | `effect_asset_query` | 可用 | 按 `query/root/classes/limit` 查找 Niagara、Cascade、Blueprint、Material、Texture、Sound 等视觉相关资产。 |
@@ -142,6 +145,8 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 直接攻击与抛体攻击不能同时拥有同一份伤害。常规抛体攻击应关闭 Agent 的命中时刻伤害，由 Projectile DataAsset 负责飞行、碰撞、伤害和生命周期。`projectile_validate` 还会拒绝完全相同且已启用的 `OnHit.SpawnFx` 与 `OnRemoval.SpawnFx`，因为两者可能在同一个模拟 Tick 执行并生成两次完整爆炸。
 
 VAT 单位创建会先使用发现到的原始贴图；如果基于文件名的贴图发现漏掉源材质贴图，Editor MCP 可以在创建 VAT 材质实例前从源 SkeletalMesh 材质继承常见贴图参数和 used textures。`defaulted_original_textures_from_source_material` warning 是复核项，需要检查生成材质依赖是否指向预期贴图。
+
+Actor 驱动的 VAT 制作接受 `actor_class` 和逐组件 override。模块化 SkeletalMesh 通过持久化编辑器 `MeshDescription` 合并；武器等可见 StaticMesh 会转换到根空间，并刚性绑定到 Socket 解析出的骨骼。源材质槽保持不变，其直接纹理表达式与包依赖用于填充生成的 VAT 材质输入；源 Actor 与 `MassBattleFrame` 资产均不会被修改。
 
 严格的非 selection VAT create 需要这些 canonical 字段：`skeletal_mesh`、`unit_name`、`target_package_path`、`parent_material`、`source_renderer_class`、`niagara_system`、`vat_sample_rate`、`animations`。刷新已有单位使用 `target_unit`；新建单位还必须提供 `template_unit`、`target_unit_package_path`、`subtype`。刷新已生成资产时应传 `overwrite_existing=true` 和 `refresh_materials=true`，否则旧 StaticMesh 会阻止执行，避免静默复用白材质/无动画资产。
 
