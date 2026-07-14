@@ -2927,6 +2927,9 @@ FString UMassBattleUnitMCPApi::MCP_UnitGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_UnitGetSchema"), TEXT("unit.schema"), TEXT("Expose editable schema and field roles.")));
 	Tools.Add(Tool(TEXT("MCP_UnitExport"), TEXT("unit.export"), TEXT("Export balance fields to CSV/JSON.")));
 	Tools.Add(Tool(TEXT("MCP_UnitCreate"), TEXT("unit.create"), TEXT("Create a unit from the default or specified template, then optionally apply initial unit data.")));
+	Tools.Add(Tool(TEXT("MCP_UnitPlanMergeUpdate"), TEXT("unit.plan"), TEXT("Plan a union-write and return its diff without mutating the unit.")));
+	Tools.Add(Tool(TEXT("MCP_UnitPreviewDiff"), TEXT("unit.plan"), TEXT("Preview a saved unit mutation plan and its complete diff.")));
+	Tools.Add(Tool(TEXT("MCP_UnitApplyPlan"), TEXT("unit.write"), TEXT("Apply a reviewed unit mutation plan and optionally save the unit.")));
 	Tools.Add(Tool(TEXT("MCP_UnitMergeUpdate"), TEXT("unit.write"), TEXT("Union-write partial source-aligned JSON to an existing unit and optionally save.")));
 	Tools.Add(Tool(TEXT("MCP_UnitDeleteSoft"), TEXT("unit.lifecycle"), TEXT("Move a unit to trash after referencer scan.")));
 	Tools.Add(Tool(TEXT("MCP_UnitDelete"), TEXT("unit.delete"), TEXT("Delete a unit explicitly; dry_run=true by default.")));

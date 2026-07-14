@@ -31,7 +31,7 @@ private:
 	FRunnableThread* ServerThread = nullptr;
 	FMassBattleMCPServerRunnable* ServerRunnable = nullptr;
 	FIPv4Address ServerAddress;
-	int32 Port = 55558;
+	int32 Port = 55258;
 
 	static bool bGlobalServerStarted;
 };

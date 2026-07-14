@@ -1,7 +1,7 @@
 param(
     [string]$PluginRoot = "",
     [string]$ServerName = "massbattle-editor-mcp",
-    [int]$Port = 55558,
+    [int]$Port = 55258,
     [switch]$SkipBridgePing
 )
 
