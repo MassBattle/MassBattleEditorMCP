@@ -15,6 +15,8 @@
 #include "Misc/StringOutputDevice.h"
 #include "Modules/ModuleManager.h"
 #include "NiagaraDataInterface.h"
+#include "NiagaraConstants.h"
+#include "NiagaraEditorUtilities.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraExternalSystemEditorUtilities.h"
@@ -22,6 +24,7 @@
 #include "NiagaraNode.h"
 #include "NiagaraNodeAssignment.h"
 #include "NiagaraNodeFunctionCall.h"
+#include "NiagaraNodeInput.h"
 #include "NiagaraNodeOutput.h"
 #include "NiagaraParameterStore.h"
 #include "NiagaraRendererProperties.h"
@@ -40,6 +43,7 @@
 #include "UObject/SoftObjectPath.h"
 #include "UObject/StructOnScope.h"
 #include "UObject/UnrealType.h"
+#include "UObject/UObjectGlobals.h"
 #include "ViewModels/NiagaraEmitterHandleViewModel.h"
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "ViewModels/Stack/NiagaraStackEntry.h"
@@ -393,6 +397,8 @@ static TSharedPtr<FJsonObject> ParameterToJson(const FNiagaraVariableBase& Varia
 	return Obj;
 }
 
+static FString ParameterValueSignature(const FNiagaraParameterStore& Store, const FNiagaraVariableWithOffset& StoredVariable);
+
 static TArray<TSharedPtr<FJsonValue>> UserParametersToJson(UNiagaraSystem* System)
 {
 	TArray<TSharedPtr<FJsonValue>> Values;
@@ -401,9 +407,12 @@ static TArray<TSharedPtr<FJsonValue>> UserParametersToJson(UNiagaraSystem* Syste
 		return Values;
 	}
 
-	for (const FNiagaraVariableWithOffset& Variable : System->GetExposedParameters().ReadParameterVariables())
+	const FNiagaraParameterStore& Store = System->GetExposedParameters();
+	for (const FNiagaraVariableWithOffset& Variable : Store.ReadParameterVariables())
 	{
-		Values.Add(MakeShared<FJsonValueObject>(ParameterToJson(Variable)));
+		TSharedPtr<FJsonObject> Parameter = ParameterToJson(Variable);
+		Parameter->SetStringField(TEXT("default_value_fingerprint"), ParameterValueSignature(Store, Variable));
+		Values.Add(MakeShared<FJsonValueObject>(Parameter));
 	}
 	return Values;
 }
@@ -1996,6 +2005,25 @@ static void CaptureRapidIterationParameters(const FString& OwnerKey, const UNiag
 	}
 }
 
+static FString StableGraphNodeIdentity(const UEdGraphNode* Node)
+{
+	if (!Node)
+	{
+		return TEXT("<null>");
+	}
+	// RebuildEmitterNodes intentionally regenerates NiagaraNodeEmitter GUIDs whenever an
+	// emitter is added.  Their authored identity is the handle + spawn/update usage, so use
+	// that semantic key while retaining GUID identity for every user-authored graph node.
+	if (Node->GetClass()->GetFName() == TEXT("NiagaraNodeEmitter"))
+	{
+		return FString::Printf(
+			TEXT("emitter_ref:%s:%s"),
+			*ExportNamedProperty(Node->GetClass(), Node, TEXT("EmitterHandleId")),
+			*ExportNamedProperty(Node->GetClass(), Node, TEXT("ScriptType")));
+	}
+	return Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens);
+}
+
 static void CapturePreservationState(UNiagaraSystem* System, FNiagaraPreservationState& OutState)
 {
 	OutState = FNiagaraPreservationState();
@@ -2153,8 +2181,8 @@ static void CapturePreservationState(UNiagaraSystem* System, FNiagaraPreservatio
 			{
 				continue;
 			}
-			const FString NodeGuid = Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens);
-			FString NodeSignature = NodeGuid + TEXT("|") + Node->GetClass()->GetPathName()
+			const FString NodeIdentity = StableGraphNodeIdentity(Node);
+			FString NodeSignature = NodeIdentity + TEXT("|") + Node->GetClass()->GetPathName()
 				+ TEXT("|") + GetObjectPathString(Cast<UNiagaraNode>(Node) ? CastChecked<UNiagaraNode>(Node)->GetReferencedAsset() : nullptr);
 			if (const UNiagaraNodeFunctionCall* FunctionNode = Cast<UNiagaraNodeFunctionCall>(Node))
 			{
@@ -2165,8 +2193,9 @@ static void CapturePreservationState(UNiagaraSystem* System, FNiagaraPreservatio
 					+ TEXT("|user_set=") + FString::FromInt(FunctionNode->HasUserSetTheEnabledState() ? 1 : 0);
 			}
 			UniqueNodes.Add(NodeSignature);
-			for (UEdGraphPin* Pin : Node->Pins)
+			for (int32 PinIndex = 0; PinIndex < Node->Pins.Num(); ++PinIndex)
 			{
+				UEdGraphPin* Pin = Node->Pins[PinIndex];
 				if (!Pin)
 				{
 					continue;
@@ -2176,10 +2205,14 @@ static void CapturePreservationState(UNiagaraSystem* System, FNiagaraPreservatio
 				// pins remain part of the preservation fingerprint.
 				if (!(Pin->PinName.IsNone() && Pin->LinkedTo.IsEmpty()))
 				{
-					UniquePins.Add(NodeGuid
+					UniquePins.Add(NodeIdentity
 						+ TEXT("|") + (Pin->Direction == EGPD_Input ? TEXT("in") : TEXT("out"))
 						+ TEXT("|") + Pin->PinName.ToString()
-						+ TEXT("|") + Pin->PersistentGuid.ToString(EGuidFormats::DigitsWithHyphens)
+						// Niagara can regenerate PersistentGuid while compiling a duplicated
+						// graph even though the pin's semantic identity and ordering are
+						// unchanged. Use the stable node-local ordinal so a compile-only
+						// normalization cannot masquerade as authored graph loss.
+						+ TEXT("|ordinal=") + FString::FromInt(PinIndex)
 						+ TEXT("|default=") + Pin->DefaultValue
 						+ TEXT("|object=") + GetObjectPathString(Pin->DefaultObject)
 						+ TEXT("|hidden=") + FString::FromInt(Pin->bHidden ? 1 : 0)
@@ -2196,8 +2229,8 @@ static void CapturePreservationState(UNiagaraSystem* System, FNiagaraPreservatio
 					{
 						continue;
 					}
-					UniqueEdges.Add(Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens) + TEXT(".") + Pin->PinName.ToString()
-						+ TEXT("->") + LinkedNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens) + TEXT(".") + LinkedPin->PinName.ToString());
+					UniqueEdges.Add(NodeIdentity + TEXT(".") + Pin->PinName.ToString()
+						+ TEXT("->") + StableGraphNodeIdentity(LinkedNode) + TEXT(".") + LinkedPin->PinName.ToString());
 				}
 			}
 		}
@@ -2295,6 +2328,231 @@ static bool IsSubsetWithMissing(const TArray<FString>& Before, const TArray<FStr
 	return OutMissing.IsEmpty();
 }
 
+static void ReadStringSetField(const TSharedPtr<FJsonObject>& Object, const TCHAR* FieldName, TSet<FString>& OutValues);
+
+static TMap<FString, FString> ParseSettingSignature(const FString& Signature)
+{
+	TMap<FString, FString> Fields;
+	TArray<FString> Parts;
+	Signature.ParseIntoArray(Parts, TEXT("|"), false);
+	for (const FString& Part : Parts)
+	{
+		FString Key;
+		FString Value;
+		if (Part.Split(TEXT("="), &Key, &Value) && !Key.IsEmpty())
+		{
+			Fields.Add(Key.ToLower(), Value);
+		}
+	}
+	return Fields;
+}
+
+static bool FilterDeclaredSystemSettingChanges(
+	const TArray<FString>& Before,
+	const TArray<FString>& After,
+	const TSharedPtr<FJsonObject>& Options,
+	TArray<FString>& OutAccepted)
+{
+	if (Before == After)
+	{
+		return true;
+	}
+
+	TSet<FString> AllowedFields;
+	ReadStringSetField(Options, TEXT("allowed_system_setting_changes"), AllowedFields);
+	TSet<FString> NormalizedAllowedFields;
+	for (FString Field : AllowedFields)
+	{
+		Field.TrimStartAndEndInline();
+		Field.ToLowerInline();
+		if (Field == TEXT("fixed_bounds"))
+		{
+			NormalizedAllowedFields.Add(TEXT("fixed"));
+			NormalizedAllowedFields.Add(TEXT("bounds"));
+		}
+		else if (!Field.IsEmpty())
+		{
+			NormalizedAllowedFields.Add(Field);
+		}
+	}
+	if (NormalizedAllowedFields.IsEmpty() || Before.Num() != 1 || After.Num() != 1)
+	{
+		return false;
+	}
+
+	const TMap<FString, FString> BeforeFields = ParseSettingSignature(Before[0]);
+	const TMap<FString, FString> AfterFields = ParseSettingSignature(After[0]);
+	TSet<FString> AllKeys;
+	TArray<FString> BeforeKeys;
+	BeforeFields.GetKeys(BeforeKeys);
+	AllKeys.Append(BeforeKeys);
+	TArray<FString> AfterKeys;
+	AfterFields.GetKeys(AfterKeys);
+	AllKeys.Append(AfterKeys);
+
+	bool bAcceptedAllChanges = true;
+	for (const FString& Key : AllKeys)
+	{
+		const FString* BeforeValue = BeforeFields.Find(Key);
+		const FString* AfterValue = AfterFields.Find(Key);
+		if (BeforeValue && AfterValue && *BeforeValue == *AfterValue)
+		{
+			continue;
+		}
+		if (!NormalizedAllowedFields.Contains(Key))
+		{
+			bAcceptedAllChanges = false;
+			continue;
+		}
+		OutAccepted.Add(FString::Printf(
+			TEXT("%s:%s->%s"),
+			*Key,
+			BeforeValue ? **BeforeValue : TEXT("<missing>"),
+			AfterValue ? **AfterValue : TEXT("<missing>")));
+	}
+	return bAcceptedAllChanges;
+}
+
+static FString StripModuleEnabledState(FString Signature)
+{
+	// Both preservation signatures put the authored enabled state at the end.  Strip only
+	// those two fields so an allow-list can never hide a script, class, asset, or GUID change.
+	const int32 EnabledIndex = Signature.Find(TEXT("|enabled="), ESearchCase::CaseSensitive, ESearchDir::FromStart);
+	if (EnabledIndex != INDEX_NONE)
+	{
+		Signature.LeftInline(EnabledIndex, EAllowShrinking::No);
+	}
+	return Signature;
+}
+
+static FString SignatureNodeGuid(const FString& Signature)
+{
+	FString Guid;
+	FString Remainder;
+	return Signature.Split(TEXT("|"), &Guid, &Remainder) ? Guid : FString();
+}
+
+static bool FilterDeclaredModuleStateChanges(
+	const TArray<FString>& After,
+	const TSharedPtr<FJsonObject>& Options,
+	TArray<FString>& InOutMissing,
+	TArray<FString>& OutAccepted)
+{
+	TSet<FString> AllowedNodeGuids;
+	ReadStringSetField(Options, TEXT("allowed_module_state_change_node_guids"), AllowedNodeGuids);
+	ReadStringSetField(Options, TEXT("allowed_scheduler_node_guids"), AllowedNodeGuids);
+	if (AllowedNodeGuids.IsEmpty() || InOutMissing.IsEmpty())
+	{
+		return InOutMissing.IsEmpty();
+	}
+
+	TMultiMap<FString, FString> AfterByGuid;
+	for (const FString& Signature : After)
+	{
+		const FString Guid = SignatureNodeGuid(Signature);
+		if (!Guid.IsEmpty())
+		{
+			AfterByGuid.Add(Guid, Signature);
+		}
+	}
+
+	TArray<FString> StillMissing;
+	for (const FString& Missing : InOutMissing)
+	{
+		const FString Guid = SignatureNodeGuid(Missing);
+		bool bAccepted = false;
+		if (AllowedNodeGuids.Contains(Guid))
+		{
+			TArray<FString> Candidates;
+			AfterByGuid.MultiFind(Guid, Candidates);
+			const FString SemanticSignature = StripModuleEnabledState(Missing);
+			bAccepted = Candidates.ContainsByPredicate([&SemanticSignature](const FString& Candidate)
+			{
+				return StripModuleEnabledState(Candidate) == SemanticSignature;
+			});
+		}
+		if (bAccepted)
+		{
+			OutAccepted.Add(Missing);
+		}
+		else
+		{
+			StillMissing.Add(Missing);
+		}
+	}
+	InOutMissing = MoveTemp(StillMissing);
+	return InOutMissing.IsEmpty();
+}
+
+static bool SplitRapidIterationSignature(
+	const FString& Signature,
+	FString& OutParameterName,
+	FString& OutValueIndependentKey)
+{
+	TArray<FString> Fields;
+	Signature.ParseIntoArray(Fields, TEXT("|"), false);
+	if (Fields.Num() < 3)
+	{
+		return false;
+	}
+	OutParameterName = Fields[Fields.Num() - 3];
+	int32 ValueSeparator = INDEX_NONE;
+	if (!Signature.FindLastChar(TEXT('|'), ValueSeparator))
+	{
+		return false;
+	}
+	OutValueIndependentKey = Signature.Left(ValueSeparator);
+	return !OutParameterName.IsEmpty() && !OutValueIndependentKey.IsEmpty();
+}
+
+static bool FilterDeclaredRapidIterationChanges(
+	const TArray<FString>& After,
+	const TSharedPtr<FJsonObject>& Options,
+	TArray<FString>& InOutMissing,
+	TArray<FString>& OutAccepted)
+{
+	TSet<FString> AllowedParameterNames;
+	ReadStringSetField(
+		Options,
+		TEXT("allowed_rapid_iteration_parameter_changes"),
+		AllowedParameterNames);
+	if (AllowedParameterNames.IsEmpty() || InOutMissing.IsEmpty())
+	{
+		return InOutMissing.IsEmpty();
+	}
+
+	TSet<FString> AfterKeys;
+	for (const FString& Signature : After)
+	{
+		FString ParameterName;
+		FString Key;
+		if (SplitRapidIterationSignature(Signature, ParameterName, Key))
+		{
+			AfterKeys.Add(Key);
+		}
+	}
+
+	TArray<FString> StillMissing;
+	for (const FString& Missing : InOutMissing)
+	{
+		FString ParameterName;
+		FString Key;
+		const bool bAccepted = SplitRapidIterationSignature(Missing, ParameterName, Key)
+			&& AllowedParameterNames.Contains(ParameterName)
+			&& AfterKeys.Contains(Key);
+		if (bAccepted)
+		{
+			OutAccepted.Add(Missing);
+		}
+		else
+		{
+			StillMissing.Add(Missing);
+		}
+	}
+	InOutMissing = MoveTemp(StillMissing);
+	return InOutMissing.IsEmpty();
+}
+
 static TArray<TSharedPtr<FJsonValue>> StringsToJson(const TArray<FString>& Values, int32 Limit = 100)
 {
 	TArray<TSharedPtr<FJsonValue>> Result;
@@ -2368,17 +2626,29 @@ static bool ValidateRemovedEdgePolicy(
 static TSharedPtr<FJsonObject> BuildPreservationValidation(
 	const FNiagaraPreservationState& Before,
 	const FNiagaraPreservationState& After,
+	const TSharedPtr<FJsonObject>& Options,
 	bool& bOutAllPreserved)
 {
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
-	const bool bSystemSettings = Before.SystemSettings == After.SystemSettings;
-	const bool bEmitters = Before.Emitters == After.Emitters;
-	const bool bEmitterSettings = Before.EmitterSettings == After.EmitterSettings;
-	const bool bRendererIdentities = Before.Renderers == After.Renderers;
-	const bool bRendererProperties = Before.RendererProperties == After.RendererProperties;
+	TArray<FString> AcceptedSystemSettingChanges;
+	const bool bSystemSettings = FilterDeclaredSystemSettingChanges(
+		Before.SystemSettings,
+		After.SystemSettings,
+		Options,
+		AcceptedSystemSettingChanges);
+	TArray<FString> MissingEmitters;
+	TArray<FString> MissingEmitterSettings;
+	TArray<FString> MissingRenderers;
+	TArray<FString> MissingRendererProperties;
+	TArray<FString> MissingSimTargets;
+	TArray<FString> MissingEventHandlers;
+	const bool bEmitters = IsSubsetWithMissing(Before.Emitters, After.Emitters, MissingEmitters);
+	const bool bEmitterSettings = IsSubsetWithMissing(Before.EmitterSettings, After.EmitterSettings, MissingEmitterSettings);
+	const bool bRendererIdentities = IsSubsetWithMissing(Before.Renderers, After.Renderers, MissingRenderers);
+	const bool bRendererProperties = IsSubsetWithMissing(Before.RendererProperties, After.RendererProperties, MissingRendererProperties);
 	const bool bRenderers = bRendererIdentities && bRendererProperties;
-	const bool bSimTargets = Before.SimTargets == After.SimTargets;
-	const bool bEventHandlers = Before.EventHandlers == After.EventHandlers;
+	const bool bSimTargets = IsSubsetWithMissing(Before.SimTargets, After.SimTargets, MissingSimTargets);
+	const bool bEventHandlers = IsSubsetWithMissing(Before.EventHandlers, After.EventHandlers, MissingEventHandlers);
 	TArray<FString> MissingParameters;
 	TArray<FString> MissingRapidIterationParameters;
 	TArray<FString> MissingModules;
@@ -2386,15 +2656,23 @@ static TSharedPtr<FJsonObject> BuildPreservationValidation(
 	TArray<FString> MissingGraphPins;
 	TArray<FString> AddedGraphNodes;
 	TArray<FString> AddedGraphPins;
-	TArray<FString> MissingRendererProperties;
 	const bool bParameters = IsSubsetWithMissing(Before.UserParameters, After.UserParameters, MissingParameters);
-	const bool bRapidIterationParameters = IsSubsetWithMissing(Before.RapidIterationParameters, After.RapidIterationParameters, MissingRapidIterationParameters);
-	const bool bModules = IsSubsetWithMissing(Before.Modules, After.Modules, MissingModules);
-	const bool bGraphNodes = IsSubsetWithMissing(Before.GraphNodes, After.GraphNodes, MissingGraphNodes);
+	IsSubsetWithMissing(Before.RapidIterationParameters, After.RapidIterationParameters, MissingRapidIterationParameters);
+	IsSubsetWithMissing(Before.Modules, After.Modules, MissingModules);
+	IsSubsetWithMissing(Before.GraphNodes, After.GraphNodes, MissingGraphNodes);
+	TArray<FString> AcceptedRapidIterationChanges;
+	TArray<FString> AcceptedModuleStateChanges;
+	TArray<FString> AcceptedGraphNodeStateChanges;
+	const bool bRapidIterationParameters = FilterDeclaredRapidIterationChanges(
+		After.RapidIterationParameters,
+		Options,
+		MissingRapidIterationParameters,
+		AcceptedRapidIterationChanges);
+	const bool bModules = FilterDeclaredModuleStateChanges(After.Modules, Options, MissingModules, AcceptedModuleStateChanges);
+	const bool bGraphNodes = FilterDeclaredModuleStateChanges(After.GraphNodes, Options, MissingGraphNodes, AcceptedGraphNodeStateChanges);
 	const bool bGraphPins = IsSubsetWithMissing(Before.GraphPins, After.GraphPins, MissingGraphPins);
 	IsSubsetWithMissing(After.GraphNodes, Before.GraphNodes, AddedGraphNodes);
 	IsSubsetWithMissing(After.GraphPins, Before.GraphPins, AddedGraphPins);
-	IsSubsetWithMissing(Before.RendererProperties, After.RendererProperties, MissingRendererProperties);
 	bOutAllPreserved = bSystemSettings && bEmitters && bEmitterSettings && bRenderers && bSimTargets
 		&& bEventHandlers && bParameters && bRapidIterationParameters && bModules && bGraphNodes && bGraphPins;
 
@@ -2412,6 +2690,11 @@ static TSharedPtr<FJsonObject> BuildPreservationValidation(
 	Root->SetBoolField(TEXT("existing_module_nodes_preserved"), bModules);
 	Root->SetBoolField(TEXT("existing_graph_nodes_preserved"), bGraphNodes);
 	Root->SetBoolField(TEXT("existing_graph_pin_defaults_preserved"), bGraphPins);
+	Root->SetArrayField(TEXT("missing_emitters"), StringsToJson(MissingEmitters));
+	Root->SetArrayField(TEXT("changed_or_missing_emitter_settings"), StringsToJson(MissingEmitterSettings));
+	Root->SetArrayField(TEXT("missing_renderers"), StringsToJson(MissingRenderers));
+	Root->SetArrayField(TEXT("missing_sim_targets"), StringsToJson(MissingSimTargets));
+	Root->SetArrayField(TEXT("missing_event_handlers"), StringsToJson(MissingEventHandlers));
 	Root->SetArrayField(TEXT("missing_user_parameters"), StringsToJson(MissingParameters));
 	Root->SetArrayField(TEXT("missing_rapid_iteration_values"), StringsToJson(MissingRapidIterationParameters));
 	Root->SetArrayField(TEXT("missing_module_nodes"), StringsToJson(MissingModules));
@@ -2420,6 +2703,12 @@ static TSharedPtr<FJsonObject> BuildPreservationValidation(
 	Root->SetArrayField(TEXT("added_graph_nodes"), StringsToJson(AddedGraphNodes, 200));
 	Root->SetArrayField(TEXT("added_graph_pin_defaults"), StringsToJson(AddedGraphPins, 200));
 	Root->SetArrayField(TEXT("changed_or_missing_renderer_properties"), StringsToJson(MissingRendererProperties, 200));
+	Root->SetArrayField(TEXT("accepted_rapid_iteration_parameter_changes"), StringsToJson(AcceptedRapidIterationChanges, 200));
+	Root->SetArrayField(TEXT("accepted_module_state_changes"), StringsToJson(AcceptedModuleStateChanges, 200));
+	Root->SetArrayField(TEXT("accepted_graph_node_state_changes"), StringsToJson(AcceptedGraphNodeStateChanges, 200));
+	Root->SetArrayField(TEXT("accepted_system_setting_changes"), StringsToJson(AcceptedSystemSettingChanges, 20));
+	Root->SetNumberField(TEXT("added_emitter_count"), FMath::Max(0, After.Emitters.Num() - Before.Emitters.Num()));
+	Root->SetBoolField(TEXT("additive_emitters_allowed"), true);
 
 	TSharedPtr<FJsonObject> BeforeFingerprints = MakeShared<FJsonObject>();
 	TSharedPtr<FJsonObject> AfterFingerprints = MakeShared<FJsonObject>();
@@ -2559,7 +2848,173 @@ static bool ResolveSimpleNiagaraType(const FString& TypeName, FNiagaraTypeDefini
 		OutType = FNiagaraTypeDefinition::GetFloatDef();
 		return true;
 	}
+	if (Normalized == TEXT("vec2") || Normalized == TEXT("vector2") || Normalized == TEXT("float2"))
+	{
+		OutType = FNiagaraTypeDefinition::GetVec2Def();
+		return true;
+	}
+	if (Normalized == TEXT("vec3") || Normalized == TEXT("vector") || Normalized == TEXT("vector3") || Normalized == TEXT("float3"))
+	{
+		OutType = FNiagaraTypeDefinition::GetVec3Def();
+		return true;
+	}
+	if (Normalized == TEXT("vec4") || Normalized == TEXT("vector4") || Normalized == TEXT("float4"))
+	{
+		OutType = FNiagaraTypeDefinition::GetVec4Def();
+		return true;
+	}
+	if (Normalized == TEXT("position") || Normalized == TEXT("niagaraposition"))
+	{
+		OutType = FNiagaraTypeDefinition::GetPositionDef();
+		return true;
+	}
+	if (Normalized == TEXT("quat") || Normalized == TEXT("quaternion"))
+	{
+		OutType = FNiagaraTypeDefinition::GetQuatDef();
+		return true;
+	}
+	if (Normalized == TEXT("color") || Normalized == TEXT("linearcolor"))
+	{
+		OutType = FNiagaraTypeDefinition::GetColorDef();
+		return true;
+	}
 	return false;
+}
+
+static bool ApplyCopyEmitterFromSystem(
+	UNiagaraSystem* System,
+	const TSharedPtr<FJsonObject>& Operation,
+	const TSharedPtr<FJsonObject>& Result,
+	FString& OutError)
+{
+	if (!System || !Operation.IsValid())
+	{
+		OutError = TEXT("copy_emitter_from_system received an invalid target or operation");
+		return false;
+	}
+
+	FString SourceSystemPath;
+	FString SourceEmitterName;
+	FString NewEmitterName;
+	Operation->TryGetStringField(TEXT("source_system"), SourceSystemPath);
+	Operation->TryGetStringField(TEXT("source_system_path"), SourceSystemPath);
+	Operation->TryGetStringField(TEXT("source_emitter"), SourceEmitterName);
+	Operation->TryGetStringField(TEXT("source_emitter_name"), SourceEmitterName);
+	Operation->TryGetStringField(TEXT("new_emitter_name"), NewEmitterName);
+	Operation->TryGetStringField(TEXT("target_emitter_name"), NewEmitterName);
+	if (SourceSystemPath.IsEmpty() || SourceEmitterName.IsEmpty())
+	{
+		OutError = TEXT("copy_emitter_from_system requires source_system and source_emitter");
+		return false;
+	}
+	if (NewEmitterName.IsEmpty())
+	{
+		NewEmitterName = SourceEmitterName;
+	}
+
+	FString LoadError;
+	UNiagaraSystem* SourceSystem = LoadSystem(SourceSystemPath, LoadError);
+	if (!SourceSystem)
+	{
+		OutError = LoadError;
+		return false;
+	}
+	FNiagaraEmitterHandle* SourceHandle = nullptr;
+	if (!FindEmitterHandle(SourceSystem, SourceEmitterName, SourceHandle) || !SourceHandle)
+	{
+		OutError = FString::Printf(TEXT("Source emitter not found: %s in %s"), *SourceEmitterName, *SourceSystem->GetPathName());
+		return false;
+	}
+	const FVersionedNiagaraEmitter SourceInstance = SourceHandle->GetInstance();
+	if (!SourceInstance.Emitter)
+	{
+		OutError = FString::Printf(TEXT("Source emitter is stateless or has no editable emitter instance: %s"), *SourceEmitterName);
+		return false;
+	}
+	const FNiagaraEmitterHandle SourceHandleSnapshot = *SourceHandle;
+
+	FNiagaraEmitterHandle* ExistingHandle = nullptr;
+	if (FindEmitterHandle(System, NewEmitterName, ExistingHandle))
+	{
+		OutError = FString::Printf(TEXT("Target emitter name already exists: %s"), *NewEmitterName);
+		return false;
+	}
+
+	// AddEmitterToSystem is still used to create the target handle and rebuild the
+	// system graph.  For a normal system it creates an inherited emitter, however,
+	// and a private emitter owned by another system cannot legally be its parent.
+	// Create a temporary deep duplicate in the target package, swap that instance
+	// into the graph-backed handle, then remove the temporary handle.  The retained
+	// handle keeps its graph identity while its emitter/version data are wholly
+	// owned by the target system.
+	System->Modify();
+	const FGuid AddedEmitterId = FNiagaraEditorUtilities::AddEmitterToSystem(
+		*System,
+		*SourceInstance.Emitter,
+		SourceInstance.Version,
+		true);
+
+	const FString DeepCopyName = FString::Printf(TEXT("%s_MCPDeepCopy"), *NewEmitterName);
+	const FName DeepCopyObjectName = MakeUniqueObjectName(
+		System,
+		UNiagaraEmitter::StaticClass(),
+		FName(*DeepCopyName));
+	const FNiagaraEmitterHandle DeepCopyHandle = System->DuplicateEmitterHandle(
+		SourceHandleSnapshot,
+		DeepCopyObjectName);
+	const FVersionedNiagaraEmitter DeepCopyInstance = DeepCopyHandle.GetInstance();
+	if (!DeepCopyInstance.Emitter || DeepCopyInstance.Emitter->GetOuter() != System)
+	{
+		System->RemoveEmitterHandle(DeepCopyHandle);
+		OutError = FString::Printf(
+			TEXT("Failed to create a target-owned emitter duplicate: %s"),
+			DeepCopyInstance.Emitter ? *DeepCopyInstance.Emitter->GetPathName() : TEXT("<null>"));
+		return false;
+	}
+
+	FNiagaraEmitterHandle* AddedHandle = nullptr;
+	if (!FindEmitterHandle(System, AddedEmitterId.ToString(EGuidFormats::DigitsWithHyphens), AddedHandle) || !AddedHandle)
+	{
+		System->RemoveEmitterHandle(DeepCopyHandle);
+		OutError = FString::Printf(TEXT("Failed to add emitter %s into %s"), *SourceEmitterName, *System->GetPathName());
+		return false;
+	}
+	AddedHandle->SetInstance(DeepCopyInstance);
+	System->RemoveEmitterHandle(DeepCopyHandle);
+
+	// Removing the temporary handle can move the handle array, so reacquire the
+	// retained handle before applying metadata or reading the result.
+	AddedHandle = nullptr;
+	if (!FindEmitterHandle(System, AddedEmitterId.ToString(EGuidFormats::DigitsWithHyphens), AddedHandle) || !AddedHandle)
+	{
+		OutError = FString::Printf(TEXT("Deep-copied emitter handle disappeared from %s"), *System->GetPathName());
+		return false;
+	}
+	if (!AddedHandle->GetName().ToString().Equals(NewEmitterName, ESearchCase::CaseSensitive))
+	{
+		AddedHandle->SetName(*NewEmitterName, *System);
+	}
+	AddedHandle->SetIsEnabled(SourceHandleSnapshot.GetIsEnabled(), *System, false);
+	const FVersionedNiagaraEmitter AddedInstance = AddedHandle->GetInstance();
+	if (!AddedInstance.Emitter || AddedInstance.Emitter->GetOuter() != System)
+	{
+		OutError = FString::Printf(
+			TEXT("Deep-copied emitter is not owned by target system: %s"),
+			AddedInstance.Emitter ? *AddedInstance.Emitter->GetPathName() : TEXT("<null>"));
+		return false;
+	}
+	System->MarkPackageDirty();
+
+	Result->SetBoolField(TEXT("changed"), true);
+	Result->SetStringField(TEXT("source_system"), SourceSystem->GetPathName());
+	Result->SetStringField(TEXT("source_emitter"), SourceHandleSnapshot.GetName().ToString());
+	Result->SetStringField(TEXT("emitter"), AddedHandle->GetName().ToString());
+	Result->SetStringField(TEXT("emitter_id"), AddedHandle->GetId().ToString(EGuidFormats::DigitsWithHyphens));
+	Result->SetStringField(TEXT("emitter_object"), GetObjectPathString(AddedHandle->GetInstance().Emitter));
+	Result->SetBoolField(TEXT("deep_copy"), true);
+	Result->SetStringField(TEXT("emitter_outer"), AddedInstance.Emitter->GetOuter()->GetPathName());
+	Result->SetBoolField(TEXT("enabled"), AddedHandle->GetIsEnabled());
+	return true;
 }
 
 static bool ApplyAddUserParameter(
@@ -2734,6 +3189,159 @@ static bool ApplyAddUserDataInterface(
 	return true;
 }
 
+static FString ModuleInputLeafName(const FName& Name)
+{
+	FString Result = Name.ToString();
+	int32 Separator = INDEX_NONE;
+	if (Result.FindLastChar(TEXT('.'), Separator))
+	{
+		Result.RightChopInline(Separator + 1, EAllowShrinking::No);
+	}
+	return Result;
+}
+
+// FNiagaraStackGraphUtilities::AddScriptModuleToStack creates an override
+// object for data-interface inputs, but UE 5.8 does not copy the module
+// script's authored DI instance into that override. For object-backed inputs
+// such as Niagara Data Channel readers this leaves required fields (notably
+// Channel) null even though the graph compiles. The system then completes at
+// age zero when the DI proxy is initialized. Mirror the editor's authored
+// default by copying every exposed module DI input immediately after insert.
+static bool RestoreInsertedModuleDataInterfaceDefaults(
+	UNiagaraSystem* System,
+	const FNiagaraGraphContext& Context,
+	UNiagaraNodeFunctionCall* ModuleNode,
+	UNiagaraScript* ModuleScript,
+	TArray<FString>& OutRestoredInputs,
+	FString& OutError)
+{
+	struct FModuleDefaultDataInterface
+	{
+		FName Name;
+		UNiagaraDataInterface* DataInterface = nullptr;
+	};
+	TArray<FModuleDefaultDataInterface> DefaultDataInterfaces;
+	// Standalone module scripts keep exposed DI defaults on UNiagaraNodeInput.
+	// UNiagaraNodeInput is MinimalAPI and its GetDataInterface accessor is not
+	// exported, so read the serialized UPROPERTY through reflection instead of
+	// linking against that accessor. The compiled DI cache is not sufficient:
+	// object-backed defaults can be absent there even when the authored module
+	// graph contains a required asset reference.
+	if (UNiagaraGraph* ModuleGraph = GetGraphFromScript(ModuleScript))
+	{
+		const FObjectPropertyBase* DataInterfaceProperty =
+			FindFProperty<FObjectPropertyBase>(UNiagaraNodeInput::StaticClass(), TEXT("DataInterface"));
+		TArray<UNiagaraNodeInput*> InputNodes;
+		ModuleGraph->GetNodesOfClass(InputNodes);
+		for (UNiagaraNodeInput* InputNode : InputNodes)
+		{
+			if (!InputNode
+				|| InputNode->Usage != ENiagaraInputNodeUsage::Parameter
+				|| !InputNode->ExposureOptions.bExposed
+				|| !InputNode->Input.GetType().IsDataInterface()
+				|| !DataInterfaceProperty)
+			{
+				continue;
+			}
+			UNiagaraDataInterface* DataInterface = Cast<UNiagaraDataInterface>(
+				DataInterfaceProperty->GetObjectPropertyValue_InContainer(InputNode));
+			if (!DataInterface)
+			{
+				continue;
+			}
+			FModuleDefaultDataInterface& Default = DefaultDataInterfaces.AddDefaulted_GetRef();
+			Default.Name = InputNode->Input.GetName();
+			Default.DataInterface = DataInterface;
+		}
+	}
+	for (const FNiagaraScriptDataInterfaceInfo& DefaultInfo : ModuleScript->GetCachedDefaultDataInterfaces())
+	{
+		const FName DefaultName = !DefaultInfo.Name.IsNone()
+			? DefaultInfo.Name
+			: !DefaultInfo.CompileName.IsNone()
+				? DefaultInfo.CompileName
+				: DefaultInfo.RegisteredParameterMapRead;
+		const FString DefaultLeafName = ModuleInputLeafName(DefaultName);
+		if (DefaultInfo.DataInterface && !DefaultDataInterfaces.ContainsByPredicate(
+			[&](const FModuleDefaultDataInterface& Existing)
+			{
+				return Existing.DataInterface
+					&& Existing.DataInterface->GetClass() == DefaultInfo.DataInterface->GetClass()
+					&& ModuleInputLeafName(Existing.Name).Equals(DefaultLeafName, ESearchCase::IgnoreCase);
+			}))
+		{
+			FModuleDefaultDataInterface& Default = DefaultDataInterfaces.AddDefaulted_GetRef();
+			Default.Name = DefaultName;
+			Default.DataInterface = DefaultInfo.DataInterface;
+		}
+	}
+	if (DefaultDataInterfaces.IsEmpty())
+	{
+		return true;
+	}
+
+	FNiagaraExternalEditContext ExternalContext(System);
+	UNiagaraStackScriptItemGroup* ScriptGroup = FindUsageAwareScriptGroup(ExternalContext, Context, OutError);
+	UNiagaraStackModuleItem* ModuleItem = ScriptGroup
+		? FindUsageAwareModule(ScriptGroup, ModuleNode, OutError)
+		: nullptr;
+	if (!ModuleItem)
+	{
+		return false;
+	}
+
+	TArray<UNiagaraStackFunctionInput*> StackInputs;
+	ForEachFlattenedStackInput(ModuleItem, [&](UNiagaraStackFunctionInput* Input)
+	{
+		StackInputs.Add(Input);
+		return true;
+	});
+
+	for (const FModuleDefaultDataInterface& Default : DefaultDataInterfaces)
+	{
+		UNiagaraDataInterface* SourceDataInterface = Default.DataInterface;
+		const FString DefaultName = ModuleInputLeafName(Default.Name);
+		UNiagaraStackFunctionInput* TargetInput = nullptr;
+		for (UNiagaraStackFunctionInput* Candidate : StackInputs)
+		{
+			if (Candidate
+				&& Candidate->GetInputType().GetClass() == SourceDataInterface->GetClass()
+				&& ModuleInputLeafName(Candidate->GetInputParameterHandle().GetName()).Equals(DefaultName, ESearchCase::IgnoreCase))
+			{
+				TargetInput = Candidate;
+				break;
+			}
+		}
+		if (!TargetInput)
+		{
+			OutError = FString::Printf(
+				TEXT("Inserted module '%s' is missing data-interface input '%s'"),
+				*ModuleScript->GetPathName(),
+				*DefaultName);
+			return false;
+		}
+
+		bool bCallbackInvoked = false;
+		bool bCopied = false;
+		TargetInput->SetDataInterfaceValueExternal(SourceDataInterface->GetClass(), [&](UNiagaraDataInterface* DestinationDataInterface)
+		{
+			bCallbackInvoked = true;
+			bCopied = DestinationDataInterface && SourceDataInterface->CopyTo(DestinationDataInterface);
+		});
+		if (!bCallbackInvoked || !bCopied)
+		{
+			OutError = FString::Printf(
+				TEXT("Failed to restore data-interface default '%s' on inserted module '%s'"),
+				*DefaultName,
+				*ModuleScript->GetPathName());
+			return false;
+		}
+		OutRestoredInputs.Add(DefaultName);
+	}
+
+	return true;
+}
+
 static bool ApplyInsertModule(
 	UNiagaraSystem* System,
 	const TSharedPtr<FJsonObject>& Operation,
@@ -2797,6 +3405,17 @@ static bool ApplyInsertModule(
 	}
 
 	Context.Graph->NotifyGraphChanged();
+	TArray<FString> RestoredDataInterfaceInputs;
+	if (!RestoreInsertedModuleDataInterfaceDefaults(
+		System,
+		Context,
+		NewNode,
+		ModuleScript,
+		RestoredDataInterfaceInputs,
+		OutError))
+	{
+		return false;
+	}
 	System->MarkPackageDirty();
 	FString Id;
 	Operation->TryGetStringField(TEXT("id"), Id);
@@ -2820,6 +3439,156 @@ static bool ApplyInsertModule(
 	Result->SetStringField(TEXT("emitter"), Context.EmitterName);
 	Result->SetStringField(TEXT("script_usage"), ScriptUsageToString(Context.Usage));
 	Result->SetStringField(TEXT("usage_id"), Context.UsageId.ToString(EGuidFormats::DigitsWithHyphens));
+	TArray<TSharedPtr<FJsonValue>> RestoredDataInterfaceJson;
+	for (const FString& InputName : RestoredDataInterfaceInputs)
+	{
+		RestoredDataInterfaceJson.Add(MakeShared<FJsonValueString>(InputName));
+	}
+	Result->SetArrayField(TEXT("restored_data_interface_defaults"), RestoredDataInterfaceJson);
+	return true;
+}
+
+static bool ApplyInsertAssignment(
+	UNiagaraSystem* System,
+	const TSharedPtr<FJsonObject>& Operation,
+	TMap<FString, FCreatedNodeRecord>& CreatedNodes,
+	const TSharedPtr<FJsonObject>& Result,
+	FString& OutError)
+{
+	TArray<FNiagaraGraphContext> Contexts;
+	if (!SelectGraphContexts(System, GetGraphSelector(Operation), Contexts, OutError, true))
+	{
+		return false;
+	}
+	const FNiagaraGraphContext& Context = Contexts[0];
+	if (!Context.OutputNode || !Context.Graph)
+	{
+		OutError = TEXT("Selected Niagara graph has no editable output node");
+		return false;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* TargetValues = nullptr;
+	if (!Operation->TryGetArrayField(TEXT("targets"), TargetValues) || !TargetValues || TargetValues->IsEmpty())
+	{
+		OutError = TEXT("insert_assignment requires a non-empty targets array");
+		return false;
+	}
+
+	TArray<FNiagaraVariable> Targets;
+	TArray<FString> Defaults;
+	TSet<FName> TargetNames;
+	TArray<TSharedPtr<FJsonValue>> TargetResults;
+	for (int32 TargetIndex = 0; TargetIndex < TargetValues->Num(); ++TargetIndex)
+	{
+		const TSharedPtr<FJsonObject> Target = (*TargetValues)[TargetIndex]->AsObject();
+		if (!Target.IsValid())
+		{
+			OutError = FString::Printf(TEXT("insert_assignment.targets[%d] must be an object"), TargetIndex);
+			return false;
+		}
+
+		FString Name;
+		FString TypeName;
+		FString DefaultValue;
+		Target->TryGetStringField(TEXT("name"), Name);
+		Target->TryGetStringField(TEXT("parameter"), Name);
+		Target->TryGetStringField(TEXT("value_type"), TypeName);
+		Target->TryGetStringField(TEXT("parameter_type"), TypeName);
+		Target->TryGetStringField(TEXT("type"), TypeName);
+		Target->TryGetStringField(TEXT("default_value"), DefaultValue);
+		Target->TryGetStringField(TEXT("default"), DefaultValue);
+		Name.TrimStartAndEndInline();
+		if (Name.IsEmpty() || TypeName.IsEmpty())
+		{
+			OutError = FString::Printf(
+				TEXT("insert_assignment.targets[%d] requires name and type/value_type"),
+				TargetIndex);
+			return false;
+		}
+
+		const FName VariableName(*Name);
+		if (TargetNames.Contains(VariableName))
+		{
+			OutError = FString::Printf(TEXT("insert_assignment contains duplicate target: %s"), *Name);
+			return false;
+		}
+
+		FNiagaraTypeDefinition TypeDefinition;
+		if (!ResolveSimpleNiagaraType(TypeName, TypeDefinition))
+		{
+			OutError = FString::Printf(
+				TEXT("Unsupported Niagara assignment type '%s' for target %s"),
+				*TypeName,
+				*Name);
+			return false;
+		}
+
+		const FNiagaraVariable Variable(TypeDefinition, VariableName);
+		if (DefaultValue.IsEmpty())
+		{
+			DefaultValue = FNiagaraConstants::GetAttributeDefaultValue(Variable);
+		}
+		Targets.Add(Variable);
+		Defaults.Add(DefaultValue);
+		TargetNames.Add(VariableName);
+
+		TSharedPtr<FJsonObject> TargetResult = MakeShared<FJsonObject>();
+		TargetResult->SetStringField(TEXT("name"), Name);
+		TargetResult->SetStringField(TEXT("type"), TypeDefinition.GetName());
+		TargetResult->SetStringField(TEXT("default_value"), DefaultValue);
+		TargetResults.Add(MakeShared<FJsonValueObject>(TargetResult));
+	}
+
+	int32 StackIndex = INDEX_NONE;
+	Operation->TryGetNumberField(TEXT("index"), StackIndex);
+	Operation->TryGetNumberField(TEXT("stack_index"), StackIndex);
+	if (StackIndex < INDEX_NONE)
+	{
+		OutError = TEXT("insert_assignment index must be -1 (append) or a non-negative stack index");
+		return false;
+	}
+
+	System->Modify();
+	Context.Graph->Modify();
+	UNiagaraNodeAssignment* NewNode = FNiagaraStackGraphUtilities::AddParameterModuleToStack(
+		Targets,
+		*Context.OutputNode,
+		StackIndex,
+		Defaults);
+	if (!NewNode)
+	{
+		OutError = FString::Printf(
+			TEXT("Failed to insert assignment into %s:%s:%s"),
+			*Context.Scope,
+			*Context.EmitterName,
+			*ScriptUsageToString(Context.Usage));
+		return false;
+	}
+
+	Context.Graph->NotifyGraphChanged();
+	System->MarkPackageDirty();
+	FString Id;
+	Operation->TryGetStringField(TEXT("id"), Id);
+	if (!Id.IsEmpty())
+	{
+		if (CreatedNodes.Contains(Id))
+		{
+			OutError = FString::Printf(TEXT("Duplicate graph-edit operation id: %s"), *Id);
+			return false;
+		}
+		FCreatedNodeRecord Created;
+		Created.Node = NewNode;
+		Created.Context = Context;
+		CreatedNodes.Add(Id, Created);
+	}
+
+	Result->SetStringField(TEXT("node_guid"), NewNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphens));
+	Result->SetStringField(TEXT("function_name"), NewNode->GetFunctionName());
+	Result->SetNumberField(TEXT("requested_stack_index"), StackIndex);
+	Result->SetStringField(TEXT("emitter"), Context.EmitterName);
+	Result->SetStringField(TEXT("script_usage"), ScriptUsageToString(Context.Usage));
+	Result->SetStringField(TEXT("usage_id"), Context.UsageId.ToString(EGuidFormats::DigitsWithHyphens));
+	Result->SetArrayField(TEXT("targets"), TargetResults);
 	return true;
 }
 
@@ -3741,7 +4510,7 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraGetApiStatus()
 
 	TSharedPtr<FJsonObject> Root = MakeSuccessObject();
 	Root->SetStringField(TEXT("api_name"), TEXT("MassBattleNiagaraMCP"));
-	Root->SetStringField(TEXT("version"), TEXT("0.2.0"));
+	Root->SetStringField(TEXT("version"), TEXT("0.3.1"));
 	Root->SetStringField(TEXT("model"), TEXT("primitive_tools_not_workflow_buttons"));
 
 	TArray<TSharedPtr<FJsonValue>> Tools;
@@ -3758,13 +4527,13 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_NiagaraQuery"), TEXT("niagara.query"), TEXT("Query Niagara systems by path/name text."), TEXT("QueryJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraReadSummary"), TEXT("niagara.read"), TEXT("Read system, emitter, renderer, user parameter, and module summary."), TEXT("SystemPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraReadModule"), TEXT("niagara.read"), TEXT("Read one function-call module node with pins."), TEXT("SystemPath, SelectorJson")));
-	Tools.Add(Tool(TEXT("MCP_NiagaraReadGraph"), TEXT("niagara.graph.read"), TEXT("Read script graphs with stable node/pin ids and explicit links."), TEXT("SystemPath, SelectorJson")));
+	Tools.Add(Tool(TEXT("MCP_NiagaraReadGraph"), TEXT("niagara.graph.read"), TEXT("Read Niagara system or module-script graphs with stable node/pin ids and explicit links."), TEXT("SystemPath, SelectorJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraCompareSystems"), TEXT("niagara.validate"), TEXT("Compare a source system with a duplicate or translation using source-neutral semantic fingerprints."), TEXT("SourceSystemPath, TargetSystemPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraReadAll"), TEXT("niagara.read"), TEXT("Read full reflected Niagara data plus all module nodes."), TEXT("SystemPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraExportText"), TEXT("niagara.text"), TEXT("Write a deterministic text dump for LLM reading."), TEXT("SystemPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraMergeWrite"), TEXT("niagara.write"), TEXT("Union-merge property writes on system/emitter_data/renderer targets; never deletes."), TEXT("SystemPath, PatchJson, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraSetModulePin"), TEXT("niagara.write"), TEXT("Set one unlinked function-call module pin default value."), TEXT("SystemPath, SelectorJson, PinName, ValueText, bSaveAssets")));
-	Tools.Add(Tool(TEXT("MCP_NiagaraApplyGraphEdit"), TEXT("niagara.graph.write"), TEXT("Apply ordered user-DI/module/link edits, compile once, and validate lossless preservation before saving."), TEXT("SystemPath, EditJson, bSaveAssets")));
+	Tools.Add(Tool(TEXT("MCP_NiagaraApplyGraphEdit"), TEXT("niagara.graph.write"), TEXT("Apply ordered emitter-copy/user-DI/module/assignment/link edits, compile once, and validate additive source preservation before saving."), TEXT("SystemPath, EditJson, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraSetEmitterEnabled"), TEXT("niagara.write"), TEXT("Set one emitter handle enabled state explicitly."), TEXT("SystemPath, EmitterName, bEnabled, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraDelete"), TEXT("niagara.delete"), TEXT("Explicit destructive operations such as renderer removal or user-parameter removal."), TEXT("SystemPath, DeleteJson, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_NiagaraAddSpriteRenderer"), TEXT("niagara.write"), TEXT("Add one configured sprite renderer to an existing emitter."), TEXT("SystemPath, EmitterName, RendererJson, bSaveAssets")));
@@ -3933,10 +4702,6 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraReadGraph(const FString& SystemPath
 
 	FString LoadError;
 	UNiagaraSystem* System = LoadSystem(SystemPath, LoadError);
-	if (!System)
-	{
-		return MakeErrorJson(LoadError);
-	}
 
 	bool bIncludeNodes = true;
 	bool bIncludePins = true;
@@ -3949,6 +4714,65 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraReadGraph(const FString& SystemPath
 	Selector->TryGetBoolField(TEXT("include_compile_state"), bIncludeCompileState);
 	Selector->TryGetNumberField(TEXT("max_nodes"), MaxNodes);
 	MaxNodes = FMath::Clamp(MaxNodes, 1, 50000);
+
+	if (!System)
+	{
+		const FString ObjectPath = NormalizeObjectPath(SystemPath);
+		UNiagaraScript* Script = Cast<UNiagaraScript>(FSoftObjectPath(ObjectPath).TryLoad());
+		if (!Script)
+		{
+			Script = LoadObject<UNiagaraScript>(nullptr, *ObjectPath);
+		}
+		UNiagaraGraph* ScriptGraph = Script ? GetGraphFromScript(Script) : nullptr;
+		if (!Script || !ScriptGraph)
+		{
+			return MakeErrorJson(LoadError);
+		}
+
+		TArray<UNiagaraNodeOutput*> OutputNodes;
+		ScriptGraph->GetNodesOfClass(OutputNodes);
+		OutputNodes.Sort([](const UNiagaraNodeOutput& A, const UNiagaraNodeOutput& B)
+		{
+			if (A.GetUsage() != B.GetUsage())
+			{
+				return static_cast<int32>(A.GetUsage()) < static_cast<int32>(B.GetUsage());
+			}
+			return A.GetUsageId().ToString() < B.GetUsageId().ToString();
+		});
+
+		TArray<TSharedPtr<FJsonValue>> ScriptGraphs;
+		for (UNiagaraNodeOutput* OutputNode : OutputNodes)
+		{
+			if (!OutputNode)
+			{
+				continue;
+			}
+			FNiagaraGraphContext Context;
+			Context.Scope = TEXT("script_asset");
+			Context.EmitterName = TEXT("");
+			Context.Usage = OutputNode->GetUsage();
+			Context.UsageId = OutputNode->GetUsageId();
+			Context.Graph = ScriptGraph;
+			Context.OutputNode = OutputNode;
+			ScriptGraphs.Add(MakeShared<FJsonValueObject>(GraphContextToJson(
+				nullptr,
+				Context,
+				nullptr,
+				bIncludeNodes,
+				bIncludePins,
+				false,
+				MaxNodes)));
+		}
+
+		TSharedPtr<FJsonObject> Root = MakeSuccessObject();
+		Root->SetStringField(TEXT("script"), Script->GetPathName());
+		Root->SetStringField(TEXT("script_usage"), ScriptUsageToString(Script->GetUsage()));
+		Root->SetStringField(TEXT("graph"), ScriptGraph->GetPathName());
+		Root->SetNumberField(TEXT("graph_count"), ScriptGraphs.Num());
+		Root->SetArrayField(TEXT("graphs"), ScriptGraphs);
+		Root->SetBoolField(TEXT("stack_inputs_available"), false);
+		return ToCondensedJsonString(Root);
+	}
 
 	TArray<FNiagaraGraphContext> Contexts;
 	FString SelectorError;
@@ -4009,6 +4833,12 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraCompareSystems(
 	{
 		return MakeErrorJson(TEXT("SourceSystemPath and TargetSystemPath must resolve to different assets"));
 	}
+	// Snapshot runtime readiness before diagnostic external-edit contexts are
+	// created below.  Niagara's data-processing view model may transiently queue
+	// a compile while it is initialized/destroyed; that diagnostic side effect
+	// must not make a ready asset fail a read-only comparison.
+	const bool bSourceReadyAtEntry = SourceSystem->IsReadyToRun();
+	const bool bTargetReadyAtEntry = TargetSystem->IsReadyToRun();
 
 	FString Mode = TEXT("translation");
 	Options->TryGetStringField(TEXT("mode"), Mode);
@@ -4026,7 +4856,7 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraCompareSystems(
 	NormalizePreservationStateForSystem(TargetSystem, TargetState);
 
 	bool bAllSourcePreserved = false;
-	TSharedPtr<FJsonObject> Preservation = BuildPreservationValidation(SourceState, TargetState, bAllSourcePreserved);
+	TSharedPtr<FJsonObject> Preservation = BuildPreservationValidation(SourceState, TargetState, Options, bAllSourcePreserved);
 	TArray<FString> RemovedEdges;
 	TArray<FString> UnexpectedRemovedEdges;
 	const bool bRemovedEdgePolicyPassed = ValidateRemovedEdgePolicy(
@@ -4045,6 +4875,8 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraCompareSystems(
 	bool bTargetHasCompileErrors = false;
 	TSharedPtr<FJsonObject> SourceCompileState = CompileStateToJson(SourceSystem, bSourceHasCompileErrors);
 	TSharedPtr<FJsonObject> TargetCompileState = CompileStateToJson(TargetSystem, bTargetHasCompileErrors);
+	SourceCompileState->SetBoolField(TEXT("ready_to_run"), bSourceReadyAtEntry);
+	TargetCompileState->SetBoolField(TEXT("ready_to_run"), bTargetReadyAtEntry);
 	bool bSourceHasWarnings = false;
 	bool bTargetHasWarnings = false;
 	SourceCompileState->TryGetBoolField(TEXT("has_warnings"), bSourceHasWarnings);
@@ -4063,7 +4895,7 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraCompareSystems(
 	const bool bStructuralPass = Mode == TEXT("exact") ? bExactMatch : bSourcePreserved;
 	const bool bCompilePass = (!bRequireNoCompileErrors || (!bSourceHasCompileErrors && !bTargetHasCompileErrors))
 		&& (!bRequireNoWarnings || (!bSourceHasWarnings && !bTargetHasWarnings))
-		&& (!bRequireReadyToRun || (SourceSystem->IsReadyToRun() && TargetSystem->IsReadyToRun()));
+		&& (!bRequireReadyToRun || (bSourceReadyAtEntry && bTargetReadyAtEntry));
 	const bool bComparisonPassed = bStructuralPass && bCompilePass;
 
 	TSharedPtr<FJsonObject> Counts = MakeShared<FJsonObject>();
@@ -4452,7 +5284,11 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraApplyGraphEdit(const FString& Syste
 		FString OperationError;
 		bool bApplied = false;
 
-		if (Op == TEXT("add_user_parameter") || Op == TEXT("add_user_value"))
+		if (Op == TEXT("copy_emitter_from_system") || Op == TEXT("add_emitter_from_system") || Op == TEXT("copy_emitter"))
+		{
+			bApplied = ApplyCopyEmitterFromSystem(System, Operation, Result, OperationError);
+		}
+		else if (Op == TEXT("add_user_parameter") || Op == TEXT("add_user_value"))
 		{
 			bApplied = ApplyAddUserParameter(System, Operation, Result, OperationError);
 		}
@@ -4463,6 +5299,10 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraApplyGraphEdit(const FString& Syste
 		else if (Op == TEXT("insert_module") || Op == TEXT("add_module"))
 		{
 			bApplied = ApplyInsertModule(System, Operation, CreatedNodes, Result, OperationError);
+		}
+		else if (Op == TEXT("insert_assignment") || Op == TEXT("add_assignment") || Op == TEXT("set_variables"))
+		{
+			bApplied = ApplyInsertAssignment(System, Operation, CreatedNodes, Result, OperationError);
 		}
 		else if (Op == TEXT("connect_pins") || Op == TEXT("connect"))
 		{
@@ -4521,16 +5361,15 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraApplyGraphEdit(const FString& Syste
 	System->RequestCompile(true);
 	System->WaitForCompilationComplete(true, false);
 
+	// CompileStateToJson builds a diagnostic external-edit view model.  Snapshot
+	// readiness first so that diagnostic initialization cannot invalidate the
+	// result of the explicit compile barrier above.
+	const bool bReadyToRun = System->IsReadyToRun();
 	bool bHasCompileErrors = false;
 	TSharedPtr<FJsonObject> CompileState = CompileStateToJson(System, bHasCompileErrors);
+	CompileState->SetBoolField(TEXT("ready_to_run"), bReadyToRun);
 	bool bHasWarnings = false;
 	CompileState->TryGetBoolField(TEXT("has_warnings"), bHasWarnings);
-	const bool bReadyToRun = System->IsReadyToRun();
-
-	FNiagaraPreservationState AfterState;
-	CapturePreservationState(System, AfterState);
-	bool bAllPreserved = false;
-	TSharedPtr<FJsonObject> Preservation = BuildPreservationValidation(BeforeState, AfterState, bAllPreserved);
 
 	bool bRequireNoWarnings = false;
 	bool bRequireReadyToRun = true;
@@ -4542,6 +5381,11 @@ FString UMassBattleNiagaraMCPApi::MCP_NiagaraApplyGraphEdit(const FString& Syste
 		(*ValidationOptions)->TryGetBoolField(TEXT("require_no_warnings"), bRequireNoWarnings);
 		(*ValidationOptions)->TryGetBoolField(TEXT("require_ready_to_run"), bRequireReadyToRun);
 	}
+
+	FNiagaraPreservationState AfterState;
+	CapturePreservationState(System, AfterState);
+	bool bAllPreserved = false;
+	TSharedPtr<FJsonObject> Preservation = BuildPreservationValidation(BeforeState, AfterState, ValidationOptionsObject, bAllPreserved);
 	TArray<FString> RemovedEdges;
 	TArray<FString> UnexpectedRemovedEdges;
 	const bool bRemovedEdgePolicyPassed = ValidateRemovedEdgePolicy(
