@@ -334,6 +334,33 @@ async def editor_apply_create_vat_unit(
 
 
 @mcp.tool()
+async def unit_plan_write(unit_path: str, unit_data: Any) -> Dict[str, Any]:
+    """Plan a union-write and return its diff without mutating the unit."""
+    return await get_connection().send_command(
+        "MCP_UnitPlanMergeUpdate",
+        {"UnitPath": unit_path, "UnitDataJson": _json_arg(unit_data)},
+    )
+
+
+@mcp.tool()
+async def unit_preview_plan(plan_id: str) -> Dict[str, Any]:
+    """Read a previously created unit mutation plan and its complete diff."""
+    return await get_connection().send_command(
+        "MCP_UnitPreviewDiff",
+        {"PlanId": plan_id},
+    )
+
+
+@mcp.tool()
+async def unit_apply_plan(plan_id: str, save_assets: bool = True) -> Dict[str, Any]:
+    """Apply a reviewed unit mutation plan and optionally save the asset."""
+    return await get_connection().send_command(
+        "MCP_UnitApplyPlan",
+        {"PlanId": plan_id, "bSaveAssets": save_assets},
+    )
+
+
+@mcp.tool()
 async def editor_plan_create_vat_unit_from_selection(options: Any = None) -> Dict[str, Any]:
     """Diagnostic: infer the DoAll spec from current editor selection or selected_assets and return it for review."""
     return await get_connection().send_command(

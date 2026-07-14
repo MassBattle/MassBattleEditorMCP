@@ -38,7 +38,8 @@ public:
 	/** Internal helper for update diff/apply implementation; not part of the public MCP surface. */
 	static FString MCP_UnitPlanUpdate(const FString& UnitPath, const FString& PatchJson);
 
-	/** Internal helper for union-write diff/apply implementation; not part of the public MCP surface. */
+	/** Plan a union-write and return its diff without mutating the unit. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitPlanMergeUpdate(const FString& UnitPath, const FString& UnitDataJson);
 
 	/** Convenience wrapper: union-merge a partial source-aligned unit JSON object and optionally save. */
@@ -49,10 +50,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitCreate(const FString& CreateSpecJson, bool bSaveAssets);
 
-	/** Internal helper for editor workflow code; not part of the public MCP surface. */
+	/** Preview a saved unit mutation plan and its complete diff. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitPreviewDiff(const FString& PlanId);
 
-	/** Internal helper for editor workflow code; not part of the public MCP surface. */
+	/** Apply a reviewed unit mutation plan and optionally save the unit asset. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitApplyPlan(const FString& PlanId, bool bSaveAssets);
 
 	/** Move a unit asset into a dated trash folder after reporting referencers. */
