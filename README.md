@@ -39,7 +39,7 @@ This repository includes Codex skills under `skills/`:
 - `skills/massbattle-effect-mcp`: converts arbitrary source VFX into source-faithful Niagara systems that consume the MassBattleFrame Batch FX protocol.
 - `skills/massbattle-instant-damage-fx`: authors direct, agent-resolved attacks and their one-shot launch/impact Burst FX.
 - `skills/massbattle-projectile-authoring`: authors projectile-owned travel, collision, damage, lifecycle, Attached flight FX, and Burst lifecycle FX.
-- `skills/massbattle-unit-authoring`: creates and edits MassBattle units, then links validated direct-attack or projectile configurations into unit arrays.
+- `skills/massbattle-unit-authoring`: creates and edits MassBattle units from selected assets, SkeletalMeshes, or Actor Blueprint assemblies with socket-bound weapons, then links validated direct-attack or projectile configurations into unit arrays.
 
 There is only one meaning of Niagara batch conversion in these skills:
 
@@ -155,11 +155,20 @@ Direct attacks and projectiles must not both own the same damage. A normal proje
 
 The Python bridge uses a short 5-second connection timeout and a separate 600-second command-response timeout. The Unreal bridge also waits up to 600 seconds for game-thread work by default; launch with `-MassBattleMCPGameThreadTimeoutSeconds=N` or pass `GameThreadTimeoutSeconds` in command params to choose a value from 30 to 3600 seconds. If that limit is reached, the editor task may still finish, so read the target back before retrying.
 
+### Actor-to-Unit VAT Authoring
+
+`editor_apply_create_vat_unit_from_actor` is the public one-call entry point for turning an Actor Blueprint into a complete MassBattle unit. It accepts `actor_class` plus optional per-component overrides. The source Actor class and `MassBattleFrame` assets are read-only inputs and are never modified.
+
+The implementation path is:
+
+1. [`Resources/Python/MassBattleMcpServer.py`](Resources/Python/MassBattleMcpServer.py) exposes `editor_apply_create_vat_unit_from_actor` to MCP clients.
+2. [`MassBattleMCPBridge.cpp`](Source/MassBattleEditorMCP/Private/MassBattleMCPBridge.cpp) or [`MassBattleEditorMCPCommandlet.cpp`](Source/MassBattleEditorMCP/Private/MassBattleEditorMCPCommandlet.cpp) dispatches the request inside Unreal Editor.
+3. [`MassBattleActorUnitEditorMCPApi.cpp`](Source/MassBattleEditorMCP/Private/MassBattleActorUnitEditorMCPApi.cpp) spawns and inspects the Blueprint, applies component overrides, assembles a persistent SkeletalMesh, and resolves Actor-authoring defaults.
+4. [`MassBattleUnitEditorMCPApi.cpp`](Source/MassBattleEditorMCP/Private/MassBattleUnitEditorMCPApi.cpp) runs the strict unit workflow that creates or refreshes the StaticMesh, material instances, VAT data and textures, renderer Blueprint, and AgentConfig.
+
 VAT unit creation first uses discovered original textures. If filename-based discovery misses a source material texture, the editor MCP can inherit common texture parameters and used textures from the source skeletal material before creating the VAT material instance. Treat `defaulted_original_textures_from_source_material` warnings as review items and verify the generated material dependencies.
 
-Actor-driven VAT authoring accepts `actor_class` plus per-component overrides. Modular SkeletalMesh components are merged through a persistent editor `MeshDescription`; visible StaticMesh components such as weapons are transformed into the root skeleton's **reference-pose model space** and rigidly weighted to the socket's resolved bone. The attachment transform is composed as `ComponentRelative * SocketLocal * ReferenceBoneToRoot`; an evaluated animation-pose socket transform must not be baked into the source vertices because skeletal skinning applies the hand-bone animation again. `editor_inspect_actor_assembly` reports both `relative_to_root` (the spawned/evaluated pose) and `reference_pose_relative_to_root` (the transform used for assembly). Source material slots remain canonical, while their direct texture expressions and package dependencies populate generated VAT material inputs. The source Actor and `MassBattleFrame` assets are never modified.
-
-The public Actor-to-unit call chain is `Resources/Python/MassBattleMcpServer.py::editor_apply_create_vat_unit_from_actor` -> `MassBattleMCPBridge.cpp` or `MassBattleEditorMCPCommandlet.cpp` -> `MassBattleActorUnitEditorMCPApi.cpp::MCP_EditorApplyCreateVatUnitFromActor`. The Actor API spawns and inspects the Blueprint, applies component overrides, saves the assembled SkeletalMesh, resolves the documented Actor defaults, and then delegates to `MassBattleUnitEditorMCPApi.cpp::MCP_EditorApplyCreateVatUnit` for the strict StaticMesh/material/VAT/renderer/AgentConfig workflow.
+Modular SkeletalMesh components are merged through a persistent editor `MeshDescription`. Visible StaticMesh attachments such as weapons are copied into the root skeleton's **reference-pose model space** and rigidly weighted to the bone resolved from their socket. The attachment transform is `ComponentRelative * SocketLocal * ReferenceBoneToRoot`. Do not bake an evaluated animation-pose socket transform into source vertices, because skeletal skinning applies that bone animation later. `editor_inspect_actor_assembly` exposes `relative_to_root` for the spawned pose and `reference_pose_relative_to_root` for assembly. Source material slots remain canonical, and their texture expressions and package dependencies populate the generated VAT material inputs.
 
 When Actor-driven authoring omits `animations`, it selects the 10 canonical `/Game/Unit/Action/Solider` sequences by default: Idle, Move, Appear, Attack, Hit, and Death A-E. It also defaults to 24 Hz BoneMode with four bone influences and animation blend level 2. Source animation keys are resampled to the configured VAT rate before the official AnimToTexture bake, so 30 Hz source clips do not silently retain their original frame count while being played back as 24 Hz. Generated material instances persist both global and VAT-layer static overrides (`UseVAT`, `BoneMode`, the selected UV channel, influence count, and blend switches) so commandlet authoring cannot lose the animation permutation.
 

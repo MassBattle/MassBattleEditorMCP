@@ -1,6 +1,6 @@
 ---
 name: massbattle-unit-authoring
-description: Create, inspect, edit, delete, and validate MassBattle unit assets through the MassBattleEditorMCP/Unit MCP workflow in UE5. Use when Codex needs to manage MassBattle AgentConfig units, generate VAT/static-mesh unit assets from existing skeletal meshes, apply style defaults, bind renderer/Niagara/projectile/sound attack data, or batch-edit unit JSON without direct .uasset mutation.
+description: Create, inspect, edit, delete, and validate MassBattle unit assets through the MassBattleEditorMCP/Unit MCP workflow in UE5. Use when Codex needs to manage MassBattle AgentConfig units, generate VAT/static-mesh units from SkeletalMesh assets or Actor Blueprint assemblies with modular parts and socket-bound weapons, apply style defaults, bind renderer/Niagara/projectile/sound attack data, or batch-edit unit JSON without direct .uasset mutation.
 ---
 
 # MassBattle Unit Authoring
@@ -48,6 +48,21 @@ Treat MCP as the asset-registry hand, not as judgement. Build the relationship g
 ## Create Unit
 
 Mirror the official `/MassBattle/Core/MassBattleTools` editor widget. Normal AI authoring should use one DoAll-equivalent apply call, not manually sequence internal stages.
+
+### Create From An Actor Blueprint
+
+Use `editor_apply_create_vat_unit_from_actor` when an Actor Blueprint defines the final appearance through modular SkeletalMesh components, StaticMesh weapons, or component-specific material and mesh choices. This wrapper assembles one persistent SkeletalMesh, then delegates to the strict unit workflow.
+
+1. When component names or weapon bindings are unknown, call `editor_inspect_actor_assembly` first. Treat `can_assemble=false` or any error in `issues` as a blocker.
+2. Supply a complete unit spec with `actor_class`, `unit_name`, `target_package_path`, `parent_material`, `source_renderer_class`, and `niagara_system`. Supply `target_unit` when refreshing an existing unit; otherwise also supply `template_unit`, `target_unit_package_path`, and `subtype`.
+3. Use `component_overrides` entries keyed by canonical `component`. A SkeletalMesh component can receive `skeletal_mesh`; a StaticMesh component can receive `static_mesh`; mesh components can receive `materials`. Use `visible`, `clear_mesh`, and `bind_bone` only when the Actor defaults are not the intended output.
+4. Set `root_component` only when automatic root selection is ambiguous. All included modular skeletal parts must use compatible skeletons and share the root's model space.
+5. Keep attached StaticMesh vertices in the root skeleton's reference-pose model space. The converter composes `ComponentRelative * SocketLocal * ReferenceBoneToRoot` and rigidly weights the attachment to the resolved bone. Do not add a manual left/right-hand, axis, or evaluated-pose correction unless the source Actor itself is authored incorrectly.
+6. Omit `animations`, `vat_sample_rate`, and `lod_settings` to use the Actor wrapper defaults: the 10 canonical `/Game/Unit/Action/Solider` sequences, 24 Hz resampling, and LOD0 BoneMode with animation blend level 2. Pass explicit compatible animations when the Actor uses another skeleton or animation set.
+7. Call `editor_apply_create_vat_unit_from_actor` directly. Use `editor_plan_create_vat_unit_from_actor` only for an explicit dry run or after an apply reports a planning error. Pass `overwrite_existing=true` when replacing an existing assembled mesh or generated output.
+8. Require top-level `success=true`, then inspect `assembly`, `resolved_vat_spec`, and `vat_result`. Read the generated AgentConfig with `unit_get`; use `editor_inspect_vat_animation` when animation, skin-weight, lookup-UV, or VAT-material correctness is in question.
+
+### Create From Selection Or A Skeletal Mesh
 
 1. If the user selected assets in the editor, or asks for "current/selected -> generate", call `MCP_EditorApplyCreateVatUnitFromSelection` directly. It infers `skeletal_mesh`, target/template unit, selected animations, materials, VAT data asset, Niagara, and renderer template from current selection or explicit `selected_assets`; if anything required cannot be inferred, validation blocks the write.
 2. Otherwise call `MCP_EditorApplyCreateVatUnit` directly with a complete canonical spec. Do not rely on defaults, aliases, automatic animation fallback, or static fallback.
