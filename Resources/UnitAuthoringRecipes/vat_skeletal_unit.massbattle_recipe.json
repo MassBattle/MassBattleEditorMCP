@@ -12,7 +12,7 @@
     "animation_search_path": "Path used by FindAndFillAnimSequences. Defaults to the source mesh package path when omitted.",
     "animation_name_filter": "Optional name filter for FindAndFillAnimSequences. When omitted, MCP uses an empty filter to include all same-skeleton animations in the search path and returns a warning.",
     "animations": "Optional explicit animation category map such as {\"idle\": [AnimPath], \"appear\": [AnimPath], \"death\": [AnimPath]}; mirrors filling the MassBattleTools animation arrays before DoAll. If automatic categorization finds no named states, MCP falls back to same-skeleton AnimSequences and warns that this map should be supplied.",
-    "vat_sample_rate": "VAT sampling rate. Defaults to 24 for MCP-generated VAT units; runtime can still interpolate.",
+    "vat_sample_rate": "VAT sampling rate. Defaults to 24 for MCP-generated VAT units. Source animation frame counts are resampled to this rate before baking, and rates above the source key rate are rejected instead of truncating playback; runtime can still interpolate.",
     "vat_uv_channel": "StaticMesh UV channel used by AnimToTexture. Defaults to 1.",
     "texture_search_path": "Path used by FindAndFillOriginalTextures.",
     "parent_material": "Optional parent material for generated material instances. Defaults to the style default or /MassBattle/Core/AgentRenderer/VAT/M_VATMaster.",

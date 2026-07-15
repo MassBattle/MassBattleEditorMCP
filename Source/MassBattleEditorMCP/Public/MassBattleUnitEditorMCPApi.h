@@ -84,6 +84,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
 	static FString MCP_EditorInspectActorAssembly(const FString& ActorPath, const FString& OptionsJson);
 
+	/** Audit assembled skin weights, baked VAT position-frame motion, lookup UVs, and the selected animation profile. */
+	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
+	static FString MCP_EditorInspectVatAnimation(const FString& SpecJson);
+
 	/** Plan Actor component assembly followed by the strict VAT unit authoring workflow without writing assets. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|UnitEditor")
 	static FString MCP_EditorPlanCreateVatUnitFromActor(const FString& SpecJson);

@@ -936,10 +936,75 @@ static UAnimToTextureDataAsset* CreateOrLoadAnimToTextureDataAsset(const FString
 	return DataAsset;
 }
 
-static void SetMaterialStaticSwitch(UMaterialInstanceConstant* MaterialInstance, const FName ParameterName, bool bValue)
+static int32 SetMaterialStaticSwitch(UMaterialInstanceConstant* MaterialInstance, const FName ParameterName, bool bValue)
 {
-	UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MaterialInstance, ParameterName, bValue);
-	UMaterialEditingLibrary::SetMaterialInstanceStaticSwitchParameterValue(MaterialInstance, ParameterName, bValue, EMaterialParameterAssociation::LayerParameter);
+	if (!MaterialInstance)
+	{
+		return 0;
+	}
+
+	MaterialInstance->SetStaticSwitchParameterValueEditorOnly(
+		FMaterialParameterInfo(ParameterName, EMaterialParameterAssociation::GlobalParameter, INDEX_NONE), bValue);
+	MaterialInstance->SetStaticSwitchParameterValueEditorOnly(
+		FMaterialParameterInfo(ParameterName, EMaterialParameterAssociation::LayerParameter, 0), bValue);
+	return 2;
+}
+
+static bool ConfigureAnimationSampling(
+	UAnimSequence* AnimSequence,
+	float SampleRate,
+	FAnimToTextureAnimSequenceInfo& OutInfo,
+	TSharedPtr<FJsonObject>& OutSamplingPlan,
+	FString& OutError)
+{
+	OutSamplingPlan = MakeShared<FJsonObject>();
+	OutSamplingPlan->SetStringField(TEXT("animation"), AnimSequence ? AnimSequence->GetPathName() : FString());
+	OutSamplingPlan->SetNumberField(TEXT("sample_rate"), SampleRate);
+	if (!AnimSequence || SampleRate <= 0.0f)
+	{
+		OutError = TEXT("Animation sampling requires a valid AnimSequence and a positive sample rate.");
+		OutSamplingPlan->SetStringField(TEXT("error"), OutError);
+		return false;
+	}
+
+	const int32 SourceFrameCount = AnimSequence->GetNumberOfSampledKeys();
+	const double PlayLength = AnimSequence->GetPlayLength();
+	const int32 ResampledFrameCount = FMath::Max(1, FMath::RoundToInt(PlayLength * SampleRate) + 1);
+	const double SourceSampleRate = PlayLength > UE_SMALL_NUMBER && SourceFrameCount > 1
+		? static_cast<double>(SourceFrameCount - 1) / PlayLength
+		: 0.0;
+
+	OutSamplingPlan->SetNumberField(TEXT("play_length"), PlayLength);
+	OutSamplingPlan->SetNumberField(TEXT("source_frame_count"), SourceFrameCount);
+	OutSamplingPlan->SetNumberField(TEXT("source_sample_rate"), SourceSampleRate);
+	OutSamplingPlan->SetNumberField(TEXT("baked_frame_count"), ResampledFrameCount);
+	OutSamplingPlan->SetBoolField(TEXT("resampled"), ResampledFrameCount != SourceFrameCount);
+
+	if (SourceFrameCount <= 0)
+	{
+		OutError = FString::Printf(TEXT("Animation has no sampled keys: %s"), *AnimSequence->GetPathName());
+		OutSamplingPlan->SetStringField(TEXT("error"), OutError);
+		return false;
+	}
+	if (ResampledFrameCount > SourceFrameCount)
+	{
+		OutError = FString::Printf(
+			TEXT("Requested VAT sample rate %.3f Hz would require %d frames, but %s only contains %d sampled keys. Resample the source animation first or select a rate no higher than %.3f Hz."),
+			SampleRate,
+			ResampledFrameCount,
+			*AnimSequence->GetPathName(),
+			SourceFrameCount,
+			SourceSampleRate);
+		OutSamplingPlan->SetStringField(TEXT("error"), OutError);
+		return false;
+	}
+
+	OutInfo.bEnabled = true;
+	OutInfo.AnimSequence = AnimSequence;
+	OutInfo.bUseCustomRange = ResampledFrameCount != SourceFrameCount;
+	OutInfo.StartFrame = 0;
+	OutInfo.EndFrame = ResampledFrameCount - 1;
+	return true;
 }
 
 static void SetMaterialTextureParameter(UMaterialInstanceConstant* MaterialInstance, const FName ParameterName, UTexture2D* Texture)
@@ -1000,13 +1065,20 @@ static int32 UpdateVatMaterialsForLOD(UStaticMesh* StaticMesh, UAnimToTextureDat
 		}
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("BoneMode"), LOD.Mode == EVATBakeMode::BoneMode);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseVAT"), true);
-		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseTwoInfluences"), true);
-		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseFourInfluences"), false);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("AutoPlay"), false);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseUV0"), DataAsset->UVChannel == 0);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseUV1"), DataAsset->UVChannel == 1);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseUV2"), DataAsset->UVChannel == 2);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseUV3"), DataAsset->UVChannel == 3);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseTwoInfluences"),
+			LOD.Mode == EVATBakeMode::BoneMode && DataAsset->NumBoneInfluences == EAnimToTextureNumBoneInfluences::Two);
+		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseFourInfluences"),
+			LOD.Mode == EVATBakeMode::BoneMode && DataAsset->NumBoneInfluences == EAnimToTextureNumBoneInfluences::Four);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseBlend2"), LOD.AnimBlendLevel == 2 || LOD.AnimBlendLevel == 3);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("UseBlend3"), LOD.AnimBlendLevel == 3);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("DebugMode"), false);
 		SetMaterialStaticSwitch(MaterialInstance, TEXT("LegacyAnimData"), false);
-		UMaterialEditingLibrary::UpdateMaterialInstance(MaterialInstance);
+		MaterialInstance->UpdateStaticPermutation();
 		MaterialInstance->MarkPackageDirty();
 		++UpdatedCount;
 	}
@@ -1059,6 +1131,13 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 		return Root;
 	}
 
+	if (SampleRate <= 0.0f)
+	{
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("vat_sample_rate must be greater than zero."));
+		return Root;
+	}
+
 	DataAsset->Modify();
 	DataAsset->SkeletalMesh = SkeletalMesh;
 	DataAsset->StaticMesh = StaticMesh;
@@ -1068,12 +1147,24 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 	DataAsset->MaxHeight = MaxHeight;
 	DataAsset->MaxWidth = MaxWidth;
 	DataAsset->SampleRate = SampleRate;
+	DataAsset->bAutoPlay = false;
+	DataAsset->NumBoneInfluences = EAnimToTextureNumBoneInfluences::Four;
 	DataAsset->AnimSequences.Reset();
+	TArray<TSharedPtr<FJsonValue>> SamplingPlans;
 	for (UAnimSequence* AnimSequence : BakeSequences)
 	{
 		FAnimToTextureAnimSequenceInfo Info;
-		Info.bEnabled = true;
-		Info.AnimSequence = AnimSequence;
+		TSharedPtr<FJsonObject> SamplingPlan;
+		FString SamplingError;
+		if (!ConfigureAnimationSampling(AnimSequence, SampleRate, Info, SamplingPlan, SamplingError))
+		{
+			SamplingPlans.Add(MakeShared<FJsonValueObject>(SamplingPlan));
+			Root->SetBoolField(TEXT("success"), false);
+			Root->SetStringField(TEXT("error"), SamplingError);
+			Root->SetArrayField(TEXT("sampling_plan"), SamplingPlans);
+			return Root;
+		}
+		SamplingPlans.Add(MakeShared<FJsonValueObject>(SamplingPlan));
 		DataAsset->AnimSequences.Add(Info);
 	}
 
@@ -1214,6 +1305,7 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 	Root->SetStringField(TEXT("data_asset_path"), DataAsset->GetPathName());
 	Root->SetStringField(TEXT("anim_data_texture_path"), AnimDataTexture ? AnimDataTexture->GetPathName() : FString());
 	Root->SetNumberField(TEXT("sample_rate"), SampleRate);
+	Root->SetNumberField(TEXT("frame_count"), DataAsset->NumFrames);
 	Root->SetNumberField(TEXT("uv_channel"), UVChannel);
 	Root->SetNumberField(TEXT("animation_count"), BakeSequences.Num());
 	Root->SetNumberField(TEXT("static_lod_count"), StaticMeshLODCount);
@@ -1221,6 +1313,7 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 	Root->SetNumberField(TEXT("baked_lod_count"), LODSettings.Num());
 	Root->SetNumberField(TEXT("material_update_count"), TotalMaterialUpdateCount);
 	Root->SetArrayField(TEXT("lod_results"), LodResults);
+	Root->SetArrayField(TEXT("sampling_plan"), SamplingPlans);
 	Root->SetArrayField(TEXT("warnings"), Warnings);
 	Root->SetObjectField(TEXT("anims_data"), AnimsDataJson);
 	return Root;
@@ -6202,6 +6295,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorGetStatus()
 	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: infer the DoAll spec from current selection or selected_assets and return it for review.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Primary one-click current selection -> generate entry matching the MassBattleTools DoAll workflow.")));
 	Tools.Add(Tool(TEXT("MCP_EditorInspectActorAssembly"), TEXT("unit_editor.actor"), TEXT("Inspect an Actor's modular skeletal/static component assembly and resolved weapon bind bones.")));
+	Tools.Add(Tool(TEXT("MCP_EditorInspectVatAnimation"), TEXT("unit_editor.actor"), TEXT("Audit assembled skin weights, baked VAT position-frame motion, lookup UVs, and the selected animation profile.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromActor"), TEXT("unit_editor.actor"), TEXT("Plan Actor component assembly followed by strict VAT unit authoring.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromActor"), TEXT("unit_editor.actor"), TEXT("Assemble an Actor and its configured weapon into one animation-compatible SkeletalMesh, then author the VAT unit.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Plan moving a unit and its editor-generated linked assets into the selected style layout.")));

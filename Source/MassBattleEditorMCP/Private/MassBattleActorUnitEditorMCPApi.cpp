@@ -2,6 +2,8 @@
 
 #include "MassBattleUnitEditorMCPApi.h"
 
+#include "AnimToTextureDataAsset.h"
+#include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/MeshComponent.h"
@@ -14,14 +16,19 @@
 #include "Engine/Blueprint.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Materials/Material.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "MaterialEditingLibrary.h"
 #include "MeshDescription.h"
 #include "Misc/PackageName.h"
 #include "ObjectTools.h"
 #include "Rendering/SkeletalMeshModel.h"
 #include "Rendering/SkeletalMeshRenderData.h"
+#include "Rendering/SkinWeightVertexBuffer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -30,7 +37,9 @@
 #include "SkinnedAssetCompiler.h"
 #include "StaticMeshAttributes.h"
 #include "StaticMeshOperations.h"
+#include "StaticMeshResources.h"
 #include "StaticToSkeletalMeshConverter.h"
+#include "StaticParameterSet.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 #include "UObject/SoftObjectPath.h"
@@ -669,6 +678,199 @@ static void AddRequiredVatSpecIssues(const TSharedPtr<FJsonObject>& Spec, TArray
 	}
 }
 
+static TSharedPtr<FJsonObject> MakeCanonicalSoldierAnimations()
+{
+	const FString AnimationRoot = TEXT("/Game/Unit/Action/Solider/");
+	TSharedPtr<FJsonObject> Animations = MakeShared<FJsonObject>();
+	auto SetCategory = [&](const TCHAR* Category, std::initializer_list<const TCHAR*> AssetNames)
+	{
+		TArray<TSharedPtr<FJsonValue>> Values;
+		for (const TCHAR* AssetName : AssetNames)
+		{
+			Values.Add(MakeShared<FJsonValueString>(AnimationRoot + AssetName));
+		}
+		Animations->SetArrayField(Category, Values);
+	};
+
+	SetCategory(TEXT("Idle"), { TEXT("IdleSolider") });
+	SetCategory(TEXT("Move"), { TEXT("MoveSolider") });
+	SetCategory(TEXT("Appear"), { TEXT("AppearSolider") });
+	SetCategory(TEXT("Attack"), { TEXT("AttackSolider") });
+	SetCategory(TEXT("Hit"), { TEXT("HitSolider") });
+	SetCategory(TEXT("Death"), {
+		TEXT("DeathSolider_A"),
+		TEXT("DeathSolider_B"),
+		TEXT("DeathSolider_C"),
+		TEXT("DeathSolider_D"),
+		TEXT("DeathSolider_E") });
+	return Animations;
+}
+
+static int32 CountAnimationEntries(const TSharedPtr<FJsonObject>& Animations)
+{
+	int32 Count = 0;
+	if (!Animations.IsValid())
+	{
+		return Count;
+	}
+	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Animations->Values)
+	{
+		if (Pair.Value.IsValid() && Pair.Value->Type == EJson::Array)
+		{
+			Count += Pair.Value->AsArray().Num();
+		}
+	}
+	return Count;
+}
+
+static TSharedPtr<FJsonObject> ResolveActorDefaultAnimations(
+	const TSharedPtr<FJsonObject>& ResolvedSpec,
+	const FActorAssemblyContext& Context,
+	TArray<TSharedPtr<FJsonValue>>& Issues)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	const TSharedPtr<FJsonObject>* ExplicitAnimations = nullptr;
+	if (ResolvedSpec.IsValid()
+		&& ResolvedSpec->TryGetObjectField(TEXT("animations"), ExplicitAnimations)
+		&& ExplicitAnimations
+		&& ExplicitAnimations->IsValid()
+		&& CountAnimationEntries(*ExplicitAnimations) > 0)
+	{
+		Result->SetStringField(TEXT("source"), TEXT("spec.animations"));
+		Result->SetNumberField(TEXT("animation_count"), CountAnimationEntries(*ExplicitAnimations));
+		Result->SetBoolField(TEXT("defaulted"), false);
+		return Result;
+	}
+
+	bool bUseDefaults = true;
+	if (ResolvedSpec.IsValid())
+	{
+		ResolvedSpec->TryGetBoolField(TEXT("use_default_soldier_animations"), bUseDefaults);
+	}
+	if (!bUseDefaults)
+	{
+		Result->SetStringField(TEXT("source"), TEXT("disabled"));
+		Result->SetNumberField(TEXT("animation_count"), 0);
+		Result->SetBoolField(TEXT("defaulted"), false);
+		return Result;
+	}
+
+	TSharedPtr<FJsonObject> Animations = MakeCanonicalSoldierAnimations();
+	ResolvedSpec->SetObjectField(TEXT("animations"), Animations);
+	USkeleton* ExpectedSkeleton = nullptr;
+	if (Context.RootSkeletalComponent && Context.RootSkeletalComponent->GetSkeletalMeshAsset())
+	{
+		ExpectedSkeleton = Context.RootSkeletalComponent->GetSkeletalMeshAsset()->GetSkeleton();
+	}
+
+	int32 ValidCount = 0;
+	TArray<TSharedPtr<FJsonValue>> Assets;
+	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Animations->Values)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : Pair.Value->AsArray())
+		{
+			const FString Path = Value->AsString();
+			UAnimSequence* Sequence = Cast<UAnimSequence>(FSoftObjectPath(NormalizeObjectPath(Path)).TryLoad());
+			const bool bLoadable = Sequence != nullptr;
+			const bool bSkeletonMatches = bLoadable && (!ExpectedSkeleton || Sequence->GetSkeleton() == ExpectedSkeleton);
+			TSharedPtr<FJsonObject> Asset = MakeShared<FJsonObject>();
+			Asset->SetStringField(TEXT("category"), Pair.Key);
+			Asset->SetStringField(TEXT("path"), Path);
+			Asset->SetBoolField(TEXT("loadable"), bLoadable);
+			Asset->SetBoolField(TEXT("skeleton_matches"), bSkeletonMatches);
+			Assets.Add(MakeShared<FJsonValueObject>(Asset));
+			if (!bLoadable)
+			{
+				AddIssue(Issues, TEXT("error"), TEXT("default_soldier_animation_missing"),
+					FString::Printf(TEXT("Canonical soldier animation is not loadable: %s"), *Path), TEXT("animations"));
+			}
+			else if (!bSkeletonMatches)
+			{
+				AddIssue(Issues, TEXT("error"), TEXT("default_soldier_animation_skeleton_mismatch"),
+					FString::Printf(TEXT("Canonical soldier animation does not use the Actor root skeleton: %s"), *Path), TEXT("animations"));
+			}
+			else
+			{
+				++ValidCount;
+			}
+		}
+	}
+
+	AddIssue(Issues, TEXT("warning"), TEXT("defaulted_canonical_soldier_animations"),
+		TEXT("animations was omitted; Actor VAT authoring selected all 10 canonical /Game/Unit/Action/Solider animations (Idle, Move, Appear, Attack, Hit, Death A-E)."),
+		TEXT("animations"));
+	Result->SetStringField(TEXT("source"), TEXT("canonical_soldier_profile"));
+	Result->SetStringField(TEXT("root"), TEXT("/Game/Unit/Action/Solider"));
+	Result->SetNumberField(TEXT("animation_count"), CountAnimationEntries(Animations));
+	Result->SetNumberField(TEXT("valid_animation_count"), ValidCount);
+	Result->SetBoolField(TEXT("defaulted"), true);
+	Result->SetArrayField(TEXT("assets"), Assets);
+	return Result;
+}
+
+static TSharedPtr<FJsonObject> ResolveActorVatSampleRate(
+	const TSharedPtr<FJsonObject>& ResolvedSpec,
+	TArray<TSharedPtr<FJsonValue>>& Issues)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	double SampleRate = 0.0;
+	if (ResolvedSpec.IsValid()
+		&& ResolvedSpec->TryGetNumberField(TEXT("vat_sample_rate"), SampleRate)
+		&& SampleRate > 0.0)
+	{
+		Result->SetStringField(TEXT("source"), TEXT("spec.vat_sample_rate"));
+		Result->SetNumberField(TEXT("sample_rate"), SampleRate);
+		Result->SetBoolField(TEXT("defaulted"), false);
+		return Result;
+	}
+
+	constexpr double DefaultVatSampleRate = 24.0;
+	ResolvedSpec->SetNumberField(TEXT("vat_sample_rate"), DefaultVatSampleRate);
+	AddIssue(Issues, TEXT("warning"), TEXT("defaulted_vat_sample_rate"),
+		TEXT("vat_sample_rate was omitted; Actor VAT authoring selected the MassBattle MCP style default of 24 Hz."),
+		TEXT("vat_sample_rate"));
+	Result->SetStringField(TEXT("source"), TEXT("massbattle_mcp_style_default"));
+	Result->SetNumberField(TEXT("sample_rate"), DefaultVatSampleRate);
+	Result->SetBoolField(TEXT("defaulted"), true);
+	return Result;
+}
+
+static TSharedPtr<FJsonObject> ResolveActorVatLodDefaults(
+	const TSharedPtr<FJsonObject>& ResolvedSpec,
+	TArray<TSharedPtr<FJsonValue>>& Issues)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	const TArray<TSharedPtr<FJsonValue>>* ExplicitLods = nullptr;
+	if (ResolvedSpec.IsValid()
+		&& ResolvedSpec->TryGetArrayField(TEXT("lod_settings"), ExplicitLods)
+		&& ExplicitLods
+		&& !ExplicitLods->IsEmpty())
+	{
+		Result->SetStringField(TEXT("source"), TEXT("spec.lod_settings"));
+		Result->SetNumberField(TEXT("lod_count"), ExplicitLods->Num());
+		Result->SetBoolField(TEXT("defaulted"), false);
+		return Result;
+	}
+
+	TSharedPtr<FJsonObject> LOD0 = MakeShared<FJsonObject>();
+	LOD0->SetNumberField(TEXT("LODIndex"), 0);
+	LOD0->SetNumberField(TEXT("ScreenSize"), 0.0);
+	LOD0->SetNumberField(TEXT("AnimBlendLevel"), 2);
+	LOD0->SetStringField(TEXT("Mode"), TEXT("BoneMode"));
+	TArray<TSharedPtr<FJsonValue>> Lods;
+	Lods.Add(MakeShared<FJsonValueObject>(LOD0));
+	ResolvedSpec->SetArrayField(TEXT("lod_settings"), Lods);
+	AddIssue(Issues, TEXT("warning"), TEXT("defaulted_actor_vat_bone_mode"),
+		TEXT("lod_settings was omitted; Actor VAT authoring selected LOD0 BoneMode with animation blend level 2."),
+		TEXT("lod_settings"));
+	Result->SetStringField(TEXT("source"), TEXT("actor_animation_safe_default"));
+	Result->SetNumberField(TEXT("lod_count"), 1);
+	Result->SetStringField(TEXT("mode"), TEXT("BoneMode"));
+	Result->SetNumberField(TEXT("animation_blend_level"), 2);
+	Result->SetBoolField(TEXT("defaulted"), true);
+	return Result;
+}
+
 static bool ResolveAssemblyOutput(
 	const TSharedPtr<FJsonObject>& Spec,
 	FString& OutPackageName,
@@ -732,12 +934,475 @@ static TSharedPtr<FJsonObject> MakeResolvedVatSpec(const TSharedPtr<FJsonObject>
 	Resolved->Values = Spec->Values;
 	for (const FString& Field : {
 		TEXT("actor_class"), TEXT("actor"), TEXT("component_overrides"), TEXT("root_component"),
-		TEXT("assembled_skeletal_mesh_name"), TEXT("assembled_skeletal_mesh_path") })
+		TEXT("assembled_skeletal_mesh_name"), TEXT("assembled_skeletal_mesh_path"),
+		TEXT("use_default_soldier_animations") })
 	{
 		Resolved->RemoveField(Field);
 	}
 	Resolved->SetStringField(TEXT("skeletal_mesh"), AssembledMeshPath);
 	return Resolved;
+}
+
+static TSharedPtr<FJsonObject> BuildSkinWeightAudit(USkeletalMesh* SkeletalMesh)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("valid"), false);
+	if (!SkeletalMesh)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("SkeletalMesh is null."));
+		return Result;
+	}
+
+	FSkinnedAssetCompilingManager::Get().FinishCompilation({ SkeletalMesh });
+	const FSkeletalMeshRenderData* RenderData = SkeletalMesh->GetResourceForRendering();
+	if (!RenderData || RenderData->LODRenderData.IsEmpty())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("SkeletalMesh has no render LOD data."));
+		return Result;
+	}
+
+	const FSkeletalMeshLODRenderData& LOD = RenderData->LODRenderData[0];
+	const FSkinWeightVertexBuffer* SkinWeights = LOD.GetSkinWeightVertexBuffer();
+	if (!SkinWeights || SkinWeights->GetNumVertices() == 0)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("LOD0 has no readable skin-weight vertices."));
+		return Result;
+	}
+
+	int32 WeightedVertexCount = 0;
+	int32 NonRootWeightedVertexCount = 0;
+	int32 MultiInfluenceVertexCount = 0;
+	int32 InvalidSectionVertexCount = 0;
+	int32 InvalidBoneMapInfluenceCount = 0;
+	TSet<int32> UsedMeshBones;
+	const uint32 VertexCount = FMath::Min<uint32>(LOD.GetNumVertices(), SkinWeights->GetNumVertices());
+	for (uint32 VertexIndex = 0; VertexIndex < VertexCount; ++VertexIndex)
+	{
+		int32 SectionIndex = INDEX_NONE;
+		int32 SectionVertexIndex = INDEX_NONE;
+		LOD.GetSectionFromVertexIndex(static_cast<int32>(VertexIndex), SectionIndex, SectionVertexIndex);
+		if (!LOD.RenderSections.IsValidIndex(SectionIndex))
+		{
+			++InvalidSectionVertexCount;
+			continue;
+		}
+
+		const FSkelMeshRenderSection& Section = LOD.RenderSections[SectionIndex];
+		uint32 VertexWeightOffset = 0;
+		uint32 VertexInfluenceCount = 0;
+		SkinWeights->GetVertexInfluenceOffsetCount(VertexIndex, VertexWeightOffset, VertexInfluenceCount);
+		int32 PositiveInfluenceCount = 0;
+		bool bHasNonRootInfluence = false;
+		for (uint32 InfluenceIndex = 0; InfluenceIndex < VertexInfluenceCount; ++InfluenceIndex)
+		{
+			if (SkinWeights->GetBoneWeight(VertexIndex, InfluenceIndex) == 0)
+			{
+				continue;
+			}
+			++PositiveInfluenceCount;
+			const uint32 SectionBoneIndex = SkinWeights->GetBoneIndex(VertexIndex, InfluenceIndex);
+			if (!Section.BoneMap.IsValidIndex(static_cast<int32>(SectionBoneIndex)))
+			{
+				++InvalidBoneMapInfluenceCount;
+				continue;
+			}
+			const int32 MeshBoneIndex = Section.BoneMap[SectionBoneIndex];
+			UsedMeshBones.Add(MeshBoneIndex);
+			bHasNonRootInfluence |= MeshBoneIndex > 0;
+		}
+		if (PositiveInfluenceCount > 0)
+		{
+			++WeightedVertexCount;
+		}
+		if (PositiveInfluenceCount > 1)
+		{
+			++MultiInfluenceVertexCount;
+		}
+		if (bHasNonRootInfluence)
+		{
+			++NonRootWeightedVertexCount;
+		}
+	}
+
+	TArray<int32> SortedBoneIndices = UsedMeshBones.Array();
+	SortedBoneIndices.Sort();
+	TArray<TSharedPtr<FJsonValue>> UsedBones;
+	const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
+	for (const int32 BoneIndex : SortedBoneIndices)
+	{
+		TSharedPtr<FJsonObject> Bone = MakeShared<FJsonObject>();
+		Bone->SetNumberField(TEXT("index"), BoneIndex);
+		Bone->SetStringField(TEXT("name"), ReferenceSkeleton.IsValidIndex(BoneIndex)
+			? ReferenceSkeleton.GetBoneName(BoneIndex).ToString()
+			: FString());
+		UsedBones.Add(MakeShared<FJsonValueObject>(Bone));
+	}
+
+	Result->SetBoolField(TEXT("valid"), InvalidSectionVertexCount == 0 && InvalidBoneMapInfluenceCount == 0);
+	Result->SetStringField(TEXT("skeletal_mesh"), SkeletalMesh->GetPathName());
+	Result->SetNumberField(TEXT("vertex_count"), VertexCount);
+	Result->SetNumberField(TEXT("weighted_vertex_count"), WeightedVertexCount);
+	Result->SetNumberField(TEXT("non_root_weighted_vertex_count"), NonRootWeightedVertexCount);
+	Result->SetNumberField(TEXT("multi_influence_vertex_count"), MultiInfluenceVertexCount);
+	Result->SetNumberField(TEXT("non_root_weighted_vertex_ratio"), VertexCount > 0
+		? static_cast<double>(NonRootWeightedVertexCount) / static_cast<double>(VertexCount)
+		: 0.0);
+	Result->SetNumberField(TEXT("used_mesh_bone_count"), UsedMeshBones.Num());
+	Result->SetNumberField(TEXT("invalid_section_vertex_count"), InvalidSectionVertexCount);
+	Result->SetNumberField(TEXT("invalid_bone_map_influence_count"), InvalidBoneMapInfluenceCount);
+	Result->SetBoolField(TEXT("has_deforming_skin_weights"), NonRootWeightedVertexCount > 0 && UsedMeshBones.Num() > 1);
+	Result->SetArrayField(TEXT("used_mesh_bones"), UsedBones);
+	return Result;
+}
+
+static int32 CountChangedFramePairs(
+	const TArray64<uint8>& MipData,
+	int64 FrameByteCount,
+	int32 StartFrame,
+	int32 EndFrame)
+{
+	if (FrameByteCount <= 0 || StartFrame < 0 || EndFrame <= StartFrame)
+	{
+		return 0;
+	}
+	int32 ChangedPairs = 0;
+	for (int32 Frame = StartFrame + 1; Frame <= EndFrame; ++Frame)
+	{
+		const int64 PreviousOffset = static_cast<int64>(Frame - 1) * FrameByteCount;
+		const int64 CurrentOffset = static_cast<int64>(Frame) * FrameByteCount;
+		if (CurrentOffset + FrameByteCount > MipData.Num())
+		{
+			break;
+		}
+		if (FMemory::Memcmp(MipData.GetData() + PreviousOffset, MipData.GetData() + CurrentOffset, FrameByteCount) != 0)
+		{
+			++ChangedPairs;
+		}
+	}
+	return ChangedPairs;
+}
+
+static TSharedPtr<FJsonObject> BuildVertexMotionAudit(UAnimToTextureDataAsset* DataAsset)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("valid"), false);
+	if (!DataAsset)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("AnimToTextureDataAsset is null."));
+		return Result;
+	}
+
+	const bool bBoneMode = DataAsset->Mode == EAnimToTextureMode::Bone;
+	UTexture2D* PositionTexture = bBoneMode
+		? DataAsset->BonePositionTexture.LoadSynchronous()
+		: DataAsset->VertexPositionTexture.LoadSynchronous();
+	if (!PositionTexture || !PositionTexture->Source.IsValid())
+	{
+		Result->SetStringField(TEXT("error"), bBoneMode
+			? TEXT("Bone position texture has no readable source mip.")
+			: TEXT("Vertex position texture has no readable source mip."));
+		return Result;
+	}
+
+	TArray64<uint8> MipData;
+	if (!PositionTexture->Source.GetMipData(MipData, 0))
+	{
+		Result->SetStringField(TEXT("error"), bBoneMode
+			? TEXT("Failed to read bone position texture mip 0.")
+			: TEXT("Failed to read vertex position texture mip 0."));
+		return Result;
+	}
+
+	const int64 Width = PositionTexture->Source.GetSizeX();
+	const int64 Height = PositionTexture->Source.GetSizeY();
+	const int64 BytesPerPixel = PositionTexture->Source.GetBytesPerPixel();
+	const int32 RowsPerFrame = bBoneMode ? DataAsset->BoneRowsPerFrame : DataAsset->VertexRowsPerFrame;
+	const int32 FrameOffset = bBoneMode ? 1 : 0;
+	const int32 DeclaredTextureFrameCount = DataAsset->NumFrames + FrameOffset;
+	const int64 FrameByteCount = Width * FMath::Max(1, RowsPerFrame) * BytesPerPixel;
+	const int32 AvailableFrameCount = FrameByteCount > 0
+		? FMath::Min<int32>(DeclaredTextureFrameCount, static_cast<int32>(MipData.Num() / FrameByteCount))
+		: 0;
+	const int32 ChangedFramePairs = CountChangedFramePairs(
+		MipData,
+		FrameByteCount,
+		FrameOffset,
+		FMath::Min(FrameOffset + DataAsset->NumFrames - 1, AvailableFrameCount - 1));
+
+	TArray<TSharedPtr<FJsonValue>> AnimationAudits;
+	for (int32 Index = 0; Index < DataAsset->Animations.Num(); ++Index)
+	{
+		const FAnimToTextureAnimInfo& AnimInfo = DataAsset->Animations[Index];
+		TSharedPtr<FJsonObject> Animation = MakeShared<FJsonObject>();
+		Animation->SetNumberField(TEXT("index"), Index);
+		if (DataAsset->AnimSequences.IsValidIndex(Index) && DataAsset->AnimSequences[Index].AnimSequence)
+		{
+			Animation->SetStringField(TEXT("animation"), DataAsset->AnimSequences[Index].AnimSequence->GetPathName());
+		}
+		Animation->SetNumberField(TEXT("start_frame"), AnimInfo.StartFrame);
+		Animation->SetNumberField(TEXT("end_frame"), AnimInfo.EndFrame);
+		const int32 AnimationChangedPairs = CountChangedFramePairs(
+			MipData,
+			FrameByteCount,
+			FrameOffset + AnimInfo.StartFrame,
+			FMath::Min(FrameOffset + AnimInfo.EndFrame, AvailableFrameCount - 1));
+		Animation->SetNumberField(TEXT("changed_frame_pairs"), AnimationChangedPairs);
+		Animation->SetBoolField(TEXT("has_motion"), AnimationChangedPairs > 0);
+		Animation->SetBoolField(bBoneMode ? TEXT("has_bone_motion") : TEXT("has_vertex_motion"), AnimationChangedPairs > 0);
+		AnimationAudits.Add(MakeShared<FJsonValueObject>(Animation));
+	}
+
+	Result->SetBoolField(TEXT("valid"), AvailableFrameCount == DeclaredTextureFrameCount && DataAsset->NumFrames > 0);
+	Result->SetStringField(TEXT("motion_domain"), bBoneMode ? TEXT("bone") : TEXT("vertex"));
+	Result->SetStringField(TEXT("position_texture"), PositionTexture->GetPathName());
+	Result->SetNumberField(TEXT("width"), Width);
+	Result->SetNumberField(TEXT("height"), Height);
+	Result->SetNumberField(TEXT("bytes_per_pixel"), BytesPerPixel);
+	Result->SetNumberField(TEXT("source_mip_bytes"), MipData.Num());
+	Result->SetNumberField(TEXT("rows_per_frame"), RowsPerFrame);
+	Result->SetNumberField(TEXT("frame_offset"), FrameOffset);
+	Result->SetNumberField(TEXT("declared_frame_count"), DataAsset->NumFrames);
+	Result->SetNumberField(TEXT("declared_texture_frame_count"), DeclaredTextureFrameCount);
+	Result->SetNumberField(TEXT("available_frame_count"), AvailableFrameCount);
+	Result->SetNumberField(TEXT("changed_frame_pairs"), ChangedFramePairs);
+	Result->SetBoolField(TEXT("has_motion"), ChangedFramePairs > 0);
+	Result->SetBoolField(bBoneMode ? TEXT("has_bone_motion") : TEXT("has_vertex_motion"), ChangedFramePairs > 0);
+	Result->SetArrayField(TEXT("animations"), AnimationAudits);
+	return Result;
+}
+
+static TSharedPtr<FJsonObject> BuildVatUvAudit(UStaticMesh* StaticMesh, int32 LODIndex, int32 UVChannel)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("valid"), false);
+	if (!StaticMesh || !StaticMesh->GetRenderData() || !StaticMesh->GetRenderData()->LODResources.IsValidIndex(LODIndex))
+	{
+		Result->SetStringField(TEXT("error"), TEXT("StaticMesh VAT LOD is not readable."));
+		return Result;
+	}
+
+	const FStaticMeshLODResources& LOD = StaticMesh->GetRenderData()->LODResources[LODIndex];
+	const FStaticMeshVertexBuffer& Vertices = LOD.VertexBuffers.StaticMeshVertexBuffer;
+	const int32 TexCoordCount = Vertices.GetNumTexCoords();
+	const uint32 VertexCount = Vertices.GetNumVertices();
+	Result->SetStringField(TEXT("static_mesh"), StaticMesh->GetPathName());
+	Result->SetNumberField(TEXT("lod_index"), LODIndex);
+	Result->SetNumberField(TEXT("uv_channel"), UVChannel);
+	Result->SetNumberField(TEXT("tex_coord_count"), TexCoordCount);
+	Result->SetNumberField(TEXT("vertex_count"), VertexCount);
+	if (UVChannel < 0 || UVChannel >= TexCoordCount || VertexCount == 0)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("Configured VAT UV channel is missing from the StaticMesh LOD."));
+		return Result;
+	}
+
+	FVector2f MinUV(FLT_MAX, FLT_MAX);
+	FVector2f MaxUV(-FLT_MAX, -FLT_MAX);
+	int32 NonFiniteCount = 0;
+	for (uint32 VertexIndex = 0; VertexIndex < VertexCount; ++VertexIndex)
+	{
+		const FVector2f UV = Vertices.GetVertexUV(VertexIndex, UVChannel);
+		if (!FMath::IsFinite(UV.X) || !FMath::IsFinite(UV.Y))
+		{
+			++NonFiniteCount;
+			continue;
+		}
+		MinUV.X = FMath::Min(MinUV.X, UV.X);
+		MinUV.Y = FMath::Min(MinUV.Y, UV.Y);
+		MaxUV.X = FMath::Max(MaxUV.X, UV.X);
+		MaxUV.Y = FMath::Max(MaxUV.Y, UV.Y);
+	}
+	const bool bHasVariation = MaxUV.X > MinUV.X || MaxUV.Y > MinUV.Y;
+	Result->SetBoolField(TEXT("valid"), NonFiniteCount == 0 && bHasVariation);
+	Result->SetNumberField(TEXT("non_finite_uv_count"), NonFiniteCount);
+	Result->SetNumberField(TEXT("min_u"), MinUV.X);
+	Result->SetNumberField(TEXT("min_v"), MinUV.Y);
+	Result->SetNumberField(TEXT("max_u"), MaxUV.X);
+	Result->SetNumberField(TEXT("max_v"), MaxUV.Y);
+	Result->SetBoolField(TEXT("has_uv_variation"), bHasVariation);
+	return Result;
+}
+
+static TSharedPtr<FJsonObject> BuildMaterialParameterAssociationAudit(
+	UMaterialInstanceConstant* MaterialInstance,
+	EMaterialParameterAssociation Association)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	TSharedPtr<FJsonObject> Switches = MakeShared<FJsonObject>();
+	for (const FName Name : {
+		FName(TEXT("BoneMode")), FName(TEXT("UseVAT")), FName(TEXT("LegacyAnimData")),
+		FName(TEXT("AutoPlay")), FName(TEXT("UseUV0")), FName(TEXT("UseUV1")),
+		FName(TEXT("UseUV2")), FName(TEXT("UseUV3")), FName(TEXT("UseTwoInfluences")),
+		FName(TEXT("UseFourInfluences")), FName(TEXT("UseBlend2")), FName(TEXT("UseBlend3")) })
+	{
+		Switches->SetBoolField(Name.ToString(), UMaterialEditingLibrary::GetMaterialInstanceStaticSwitchParameterValue(
+			MaterialInstance, Name, Association));
+	}
+
+	TSharedPtr<FJsonObject> Textures = MakeShared<FJsonObject>();
+	for (const FName Name : {
+		FName(TEXT("PositionTexture")), FName(TEXT("NormalTexture")),
+		FName(TEXT("BonePositionTexture")), FName(TEXT("BoneRotationTexture")),
+		FName(TEXT("BoneWeightsTexture")), FName(TEXT("AnimDataTex")) })
+	{
+		UTexture* Texture = UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(MaterialInstance, Name, Association);
+		Textures->SetStringField(Name.ToString(), Texture ? Texture->GetPathName() : FString());
+	}
+
+	TSharedPtr<FJsonObject> Scalars = MakeShared<FJsonObject>();
+	for (const FName Name : {
+		FName(TEXT("RowsPerFrame")), FName(TEXT("BoneWeightsRowsPerFrame")),
+		FName(TEXT("NumBones")), FName(TEXT("NumFrames")), FName(TEXT("SampleRate")) })
+	{
+		Scalars->SetNumberField(Name.ToString(), UMaterialEditingLibrary::GetMaterialInstanceScalarParameterValue(
+			MaterialInstance, Name, Association));
+	}
+	Result->SetObjectField(TEXT("switches"), Switches);
+	Result->SetObjectField(TEXT("textures"), Textures);
+	Result->SetObjectField(TEXT("scalars"), Scalars);
+	return Result;
+}
+
+static bool MaterialHasTextureValue(UMaterialInstanceConstant* Instance, const FName Name, UTexture* Expected)
+{
+	if (!Instance || !Expected)
+	{
+		return false;
+	}
+	return UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(
+		Instance, Name, EMaterialParameterAssociation::GlobalParameter) == Expected
+		|| UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(
+			Instance, Name, EMaterialParameterAssociation::LayerParameter) == Expected;
+}
+
+static bool MaterialHasScalarValue(UMaterialInstanceConstant* Instance, const FName Name, float Expected)
+{
+	if (!Instance)
+	{
+		return false;
+	}
+	const float GlobalValue = UMaterialEditingLibrary::GetMaterialInstanceScalarParameterValue(
+		Instance, Name, EMaterialParameterAssociation::GlobalParameter);
+	const float LayerValue = UMaterialEditingLibrary::GetMaterialInstanceScalarParameterValue(
+		Instance, Name, EMaterialParameterAssociation::LayerParameter);
+	return FMath::IsNearlyEqual(GlobalValue, Expected) || FMath::IsNearlyEqual(LayerValue, Expected);
+}
+
+static TSharedPtr<FJsonObject> BuildVatMaterialAudit(UStaticMesh* StaticMesh, UAnimToTextureDataAsset* DataAsset)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	TArray<TSharedPtr<FJsonValue>> Materials;
+	int32 MaterialInstanceCount = 0;
+	int32 ValidMaterialCount = 0;
+	const bool bBoneMode = DataAsset && DataAsset->Mode == EAnimToTextureMode::Bone;
+	TMap<FName, bool> ExpectedSwitches;
+	ExpectedSwitches.Add(TEXT("UseVAT"), true);
+	ExpectedSwitches.Add(TEXT("BoneMode"), bBoneMode);
+	ExpectedSwitches.Add(TEXT("LegacyAnimData"), false);
+	ExpectedSwitches.Add(TEXT("UseUV0"), DataAsset && DataAsset->UVChannel == 0);
+	ExpectedSwitches.Add(TEXT("UseUV1"), DataAsset && DataAsset->UVChannel == 1);
+	ExpectedSwitches.Add(TEXT("UseUV2"), DataAsset && DataAsset->UVChannel == 2);
+	ExpectedSwitches.Add(TEXT("UseUV3"), DataAsset && DataAsset->UVChannel == 3);
+	ExpectedSwitches.Add(TEXT("UseTwoInfluences"), bBoneMode && DataAsset->NumBoneInfluences == EAnimToTextureNumBoneInfluences::Two);
+	ExpectedSwitches.Add(TEXT("UseFourInfluences"), bBoneMode && DataAsset->NumBoneInfluences == EAnimToTextureNumBoneInfluences::Four);
+	if (StaticMesh)
+	{
+		for (int32 SlotIndex = 0; SlotIndex < StaticMesh->GetStaticMaterials().Num(); ++SlotIndex)
+		{
+			const FStaticMaterial& Slot = StaticMesh->GetStaticMaterials()[SlotIndex];
+			TSharedPtr<FJsonObject> Material = MakeShared<FJsonObject>();
+			Material->SetNumberField(TEXT("slot_index"), SlotIndex);
+			Material->SetStringField(TEXT("slot_name"), Slot.MaterialSlotName.ToString());
+			Material->SetStringField(TEXT("material"), AssetPath(Slot.MaterialInterface));
+			UMaterialInstanceConstant* Instance = Cast<UMaterialInstanceConstant>(Slot.MaterialInterface);
+			Material->SetBoolField(TEXT("is_material_instance_constant"), Instance != nullptr);
+			if (Instance)
+			{
+				++MaterialInstanceCount;
+				Material->SetStringField(TEXT("parent"), AssetPath(Instance->Parent));
+				Material->SetObjectField(TEXT("global"), BuildMaterialParameterAssociationAudit(
+					Instance, EMaterialParameterAssociation::GlobalParameter));
+				Material->SetObjectField(TEXT("layer"), BuildMaterialParameterAssociationAudit(
+					Instance, EMaterialParameterAssociation::LayerParameter));
+				TArray<TSharedPtr<FJsonValue>> ActualStaticSwitches;
+				TSet<FName> FoundCriticalSwitches;
+				int32 StaticSwitchMismatchCount = 0;
+				const FStaticParameterSet StaticParameters = Instance->GetStaticParameters();
+				for (const FStaticSwitchParameter& StaticSwitch : StaticParameters.StaticSwitchParameters)
+				{
+					const FMaterialParameterInfo& ParameterInfo = StaticSwitch.ParameterInfo;
+					const bool bValue = StaticSwitch.Value;
+					TSharedPtr<FJsonObject> Switch = MakeShared<FJsonObject>();
+					Switch->SetStringField(TEXT("name"), ParameterInfo.Name.ToString());
+					Switch->SetNumberField(TEXT("association"), static_cast<int32>(ParameterInfo.Association));
+					Switch->SetNumberField(TEXT("index"), ParameterInfo.Index);
+					Switch->SetBoolField(TEXT("resolved"), true);
+					Switch->SetBoolField(TEXT("overridden"), StaticSwitch.bOverride);
+					Switch->SetBoolField(TEXT("value"), bValue);
+					if (const bool* Expected = ExpectedSwitches.Find(ParameterInfo.Name))
+					{
+						FoundCriticalSwitches.Add(ParameterInfo.Name);
+						Switch->SetBoolField(TEXT("expected"), *Expected);
+						const bool bMatches = bValue == *Expected;
+						Switch->SetBoolField(TEXT("matches_expected"), bMatches);
+						if (!bMatches)
+						{
+							++StaticSwitchMismatchCount;
+						}
+					}
+					ActualStaticSwitches.Add(MakeShared<FJsonValueObject>(Switch));
+				}
+				Material->SetArrayField(TEXT("actual_static_switches"), ActualStaticSwitches);
+
+				const bool bCriticalSwitchesValid = FoundCriticalSwitches.Num() == ExpectedSwitches.Num()
+					&& StaticSwitchMismatchCount == 0;
+				bool bTexturesValid = DataAsset != nullptr;
+				if (DataAsset)
+				{
+					bTexturesValid = MaterialHasTextureValue(Instance, TEXT("AnimDataTex"),
+						UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(
+							Instance, TEXT("AnimDataTex"), EMaterialParameterAssociation::LayerParameter));
+					if (bBoneMode)
+					{
+						bTexturesValid = bTexturesValid
+							&& MaterialHasTextureValue(Instance, TEXT("BonePositionTexture"), DataAsset->BonePositionTexture.LoadSynchronous())
+							&& MaterialHasTextureValue(Instance, TEXT("BoneRotationTexture"), DataAsset->BoneRotationTexture.LoadSynchronous())
+							&& MaterialHasTextureValue(Instance, TEXT("BoneWeightsTexture"), DataAsset->BoneWeightTexture.LoadSynchronous());
+					}
+					else
+					{
+						bTexturesValid = bTexturesValid
+							&& MaterialHasTextureValue(Instance, TEXT("PositionTexture"), DataAsset->VertexPositionTexture.LoadSynchronous())
+							&& MaterialHasTextureValue(Instance, TEXT("NormalTexture"), DataAsset->VertexNormalTexture.LoadSynchronous());
+					}
+				}
+				const bool bScalarsValid = DataAsset
+					&& MaterialHasScalarValue(Instance, TEXT("NumFrames"), DataAsset->NumFrames)
+					&& MaterialHasScalarValue(Instance, TEXT("SampleRate"), DataAsset->SampleRate);
+				const bool bMaterialValid = bCriticalSwitchesValid && bTexturesValid && bScalarsValid;
+				Material->SetNumberField(TEXT("critical_static_switch_count"), FoundCriticalSwitches.Num());
+				Material->SetNumberField(TEXT("critical_static_switch_mismatch_count"), StaticSwitchMismatchCount);
+				Material->SetBoolField(TEXT("critical_static_switches_valid"), bCriticalSwitchesValid);
+				Material->SetBoolField(TEXT("vat_textures_valid"), bTexturesValid);
+				Material->SetBoolField(TEXT("vat_scalars_valid"), bScalarsValid);
+				Material->SetBoolField(TEXT("valid"), bMaterialValid);
+				if (bMaterialValid)
+				{
+					++ValidMaterialCount;
+				}
+			}
+			Materials.Add(MakeShared<FJsonValueObject>(Material));
+		}
+	}
+	Result->SetBoolField(TEXT("valid"), StaticMesh != nullptr
+		&& MaterialInstanceCount == Materials.Num()
+		&& MaterialInstanceCount > 0
+		&& ValidMaterialCount == MaterialInstanceCount);
+	Result->SetNumberField(TEXT("material_count"), Materials.Num());
+	Result->SetNumberField(TEXT("material_instance_count"), MaterialInstanceCount);
+	Result->SetNumberField(TEXT("valid_material_count"), ValidMaterialCount);
+	Result->SetArrayField(TEXT("materials"), Materials);
+	return Result;
 }
 
 static USkeletalMesh* DuplicateSkeletalComponentMesh(USkeletalMeshComponent* Component, USkeleton* RootSkeleton)
@@ -1302,6 +1967,7 @@ static TSharedPtr<FJsonObject> CreateAssembledSkeletalMesh(const TSharedPtr<FJso
 	}
 	Result->SetNumberField(TEXT("material_slot_count"), MaterialSlots.Num());
 	Result->SetArrayField(TEXT("material_slots"), MaterialSlots);
+	Result->SetObjectField(TEXT("skin_weights"), BuildSkinWeightAudit(AssembledMesh));
 	Result->SetBoolField(TEXT("saved"), bSaveAssets);
 	Result->SetObjectField(TEXT("inspection"), Inspection);
 	return Result;
@@ -1324,6 +1990,145 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorInspectActorAssembly(const FStrin
 	return MassBattleActorUnitEditorMCP::ToJsonString(MassBattleActorUnitEditorMCP::BuildInspectionResult(Spec, Context));
 }
 
+FString UMassBattleUnitEditorMCPApi::MCP_EditorInspectVatAnimation(const FString& SpecJson)
+{
+	TSharedPtr<FJsonObject> Spec = MassBattleActorUnitEditorMCP::ParseObject(SpecJson);
+	if (!Spec.IsValid())
+	{
+		return MassBattleActorUnitEditorMCP::MakeError(TEXT("SpecJson is not valid JSON."));
+	}
+
+	FString VatDataPath = MassBattleActorUnitEditorMCP::GetStringField(Spec, TEXT("vat_data_asset"));
+	if (VatDataPath.IsEmpty())
+	{
+		VatDataPath = MassBattleActorUnitEditorMCP::GetStringField(Spec, TEXT("anim_to_texture_data_asset"));
+	}
+	UAnimToTextureDataAsset* VatData = MassBattleActorUnitEditorMCP::LoadAsset<UAnimToTextureDataAsset>(VatDataPath);
+	if (!VatData)
+	{
+		return MassBattleActorUnitEditorMCP::MakeError(FString::Printf(
+			TEXT("vat_data_asset is not a loadable AnimToTextureDataAsset: %s"), *VatDataPath));
+	}
+
+	FString SkeletalMeshPath = MassBattleActorUnitEditorMCP::GetStringField(Spec, TEXT("skeletal_mesh"));
+	USkeletalMesh* SkeletalMesh = SkeletalMeshPath.IsEmpty()
+		? VatData->SkeletalMesh.LoadSynchronous()
+		: MassBattleActorUnitEditorMCP::LoadAsset<USkeletalMesh>(SkeletalMeshPath);
+	FString StaticMeshPath = MassBattleActorUnitEditorMCP::GetStringField(Spec, TEXT("static_mesh"));
+	UStaticMesh* StaticMesh = StaticMeshPath.IsEmpty()
+		? VatData->StaticMesh.LoadSynchronous()
+		: MassBattleActorUnitEditorMCP::LoadAsset<UStaticMesh>(StaticMeshPath);
+
+	TSharedPtr<FJsonObject> SkinWeights = MassBattleActorUnitEditorMCP::BuildSkinWeightAudit(SkeletalMesh);
+	TSharedPtr<FJsonObject> VertexMotion = MassBattleActorUnitEditorMCP::BuildVertexMotionAudit(VatData);
+	TSharedPtr<FJsonObject> VatUv = MassBattleActorUnitEditorMCP::BuildVatUvAudit(StaticMesh, VatData->StaticLODIndex, VatData->UVChannel);
+	TSharedPtr<FJsonObject> VatMaterials = MassBattleActorUnitEditorMCP::BuildVatMaterialAudit(StaticMesh, VatData);
+
+	TSet<FString> CanonicalPaths;
+	TSharedPtr<FJsonObject> CanonicalAnimations = MassBattleActorUnitEditorMCP::MakeCanonicalSoldierAnimations();
+	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : CanonicalAnimations->Values)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : Pair.Value->AsArray())
+		{
+			CanonicalPaths.Add(MassBattleActorUnitEditorMCP::NormalizeObjectPath(Value->AsString()));
+		}
+	}
+	TSet<FString> BakedPaths;
+	TArray<TSharedPtr<FJsonValue>> BakedAnimations;
+	for (int32 Index = 0; Index < VatData->AnimSequences.Num(); ++Index)
+	{
+		const FAnimToTextureAnimSequenceInfo& Info = VatData->AnimSequences[Index];
+		if (!Info.bEnabled || !Info.AnimSequence)
+		{
+			continue;
+		}
+		const FString Path = Info.AnimSequence->GetPathName();
+		BakedPaths.Add(MassBattleActorUnitEditorMCP::NormalizeObjectPath(Path));
+		TSharedPtr<FJsonObject> Animation = MakeShared<FJsonObject>();
+		Animation->SetNumberField(TEXT("index"), Index);
+		Animation->SetStringField(TEXT("path"), Path);
+		BakedAnimations.Add(MakeShared<FJsonValueObject>(Animation));
+	}
+	bool bCanonicalProfile = BakedPaths.Num() == CanonicalPaths.Num();
+	if (bCanonicalProfile)
+	{
+		for (const FString& CanonicalPath : CanonicalPaths)
+		{
+			if (!BakedPaths.Contains(CanonicalPath))
+			{
+				bCanonicalProfile = false;
+				break;
+			}
+		}
+	}
+
+	bool bSkinValid = false;
+	bool bHasDeformingWeights = false;
+	SkinWeights->TryGetBoolField(TEXT("valid"), bSkinValid);
+	SkinWeights->TryGetBoolField(TEXT("has_deforming_skin_weights"), bHasDeformingWeights);
+	bool bMotionValid = false;
+	bool bHasMotion = false;
+	VertexMotion->TryGetBoolField(TEXT("valid"), bMotionValid);
+	VertexMotion->TryGetBoolField(TEXT("has_motion"), bHasMotion);
+	bool bUvValid = false;
+	VatUv->TryGetBoolField(TEXT("valid"), bUvValid);
+	bool bMaterialsValid = false;
+	VatMaterials->TryGetBoolField(TEXT("valid"), bMaterialsValid);
+
+	TArray<TSharedPtr<FJsonValue>> Issues;
+	if (!bSkinValid)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("invalid_skin_weight_data"),
+			TEXT("The assembled SkeletalMesh has invalid or unreadable LOD0 skin-weight data."), TEXT("skeletal_mesh"));
+	}
+	else if (!bHasDeformingWeights)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("no_deforming_skin_weights"),
+			TEXT("The assembled SkeletalMesh has no non-root deforming skin weights; baked skeletal animation would remain rigid."), TEXT("skeletal_mesh"));
+	}
+	if (!bMotionValid || !bHasMotion)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("vat_position_frames_are_static"),
+			TEXT("The VAT position texture does not contain readable frame-to-frame animation motion."), TEXT("vat_data_asset"));
+	}
+	if (!bUvValid)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("invalid_vat_uv_channel"),
+			TEXT("The generated StaticMesh does not contain a usable configured VAT lookup UV channel."), TEXT("static_mesh"));
+	}
+	if (!bMaterialsValid)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("invalid_vat_material_parameters"),
+			TEXT("One or more generated material instances do not have the required VAT mode, UV, influence, texture, or frame parameters."), TEXT("static_mesh"));
+	}
+	if (!bCanonicalProfile)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("warning"), TEXT("noncanonical_soldier_animation_profile"),
+			TEXT("The VAT data asset does not contain exactly the 10 canonical /Game/Unit/Action/Solider animations."), TEXT("vat_data_asset"));
+	}
+
+	const bool bHealthy = !MassBattleActorUnitEditorMCP::HasErrors(Issues);
+	TSharedPtr<FJsonObject> Result = MassBattleActorUnitEditorMCP::MakeResult(true);
+	Result->SetStringField(TEXT("inspection_type"), TEXT("vat_animation_readiness"));
+	Result->SetBoolField(TEXT("healthy"), bHealthy);
+	Result->SetStringField(TEXT("vat_data_asset"), VatData->GetPathName());
+	Result->SetStringField(TEXT("mode"), VatData->Mode == EAnimToTextureMode::Vertex ? TEXT("VertexMode") : TEXT("BoneMode"));
+	Result->SetStringField(TEXT("skeletal_mesh"), SkeletalMesh ? SkeletalMesh->GetPathName() : FString());
+	Result->SetStringField(TEXT("static_mesh"), StaticMesh ? StaticMesh->GetPathName() : FString());
+	Result->SetNumberField(TEXT("sample_rate"), VatData->SampleRate);
+	Result->SetNumberField(TEXT("animation_count"), BakedPaths.Num());
+	Result->SetNumberField(TEXT("frame_count"), VatData->NumFrames);
+	Result->SetBoolField(TEXT("uses_canonical_soldier_profile"), bCanonicalProfile);
+	Result->SetArrayField(TEXT("baked_animations"), BakedAnimations);
+	Result->SetObjectField(TEXT("skin_weights"), SkinWeights);
+	Result->SetObjectField(TEXT("vat_motion"), VertexMotion);
+	Result->SetObjectField(TEXT("vertex_motion"), VertexMotion);
+	Result->SetObjectField(TEXT("vat_uv"), VatUv);
+	Result->SetObjectField(TEXT("vat_materials"), VatMaterials);
+	Result->SetArrayField(TEXT("issues"), Issues);
+	return MassBattleActorUnitEditorMCP::ToJsonString(Result);
+}
+
 FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromActor(const FString& SpecJson)
 {
 	TSharedPtr<FJsonObject> Spec = MassBattleActorUnitEditorMCP::ParseObject(SpecJson);
@@ -1335,19 +2140,24 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromActor(const 
 	MassBattleActorUnitEditorMCP::FActorAssemblyContext Context;
 	TSharedPtr<FJsonObject> Inspection = MassBattleActorUnitEditorMCP::BuildInspectionResult(Spec, Context);
 	TArray<TSharedPtr<FJsonValue>> Issues = Context.Issues;
-	MassBattleActorUnitEditorMCP::AddRequiredVatSpecIssues(Spec, Issues);
+	TSharedPtr<FJsonObject> ResolvedActorSpec = MakeShared<FJsonObject>();
+	ResolvedActorSpec->Values = Spec->Values;
+	TSharedPtr<FJsonObject> AnimationResolution = MassBattleActorUnitEditorMCP::ResolveActorDefaultAnimations(ResolvedActorSpec, Context, Issues);
+	TSharedPtr<FJsonObject> SampleRateResolution = MassBattleActorUnitEditorMCP::ResolveActorVatSampleRate(ResolvedActorSpec, Issues);
+	TSharedPtr<FJsonObject> LodResolution = MassBattleActorUnitEditorMCP::ResolveActorVatLodDefaults(ResolvedActorSpec, Issues);
+	MassBattleActorUnitEditorMCP::AddRequiredVatSpecIssues(ResolvedActorSpec, Issues);
 
 	FString PackageName;
 	FString AssetName;
 	FString ObjectPath;
 	FString PathError;
-	if (!MassBattleActorUnitEditorMCP::ResolveAssemblyOutput(Spec, PackageName, AssetName, ObjectPath, PathError))
+	if (!MassBattleActorUnitEditorMCP::ResolveAssemblyOutput(ResolvedActorSpec, PackageName, AssetName, ObjectPath, PathError))
 	{
 		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("invalid_assembly_output"), PathError, TEXT("assembled_skeletal_mesh_path"));
 	}
 
 	bool bOverwriteExisting = false;
-	Spec->TryGetBoolField(TEXT("overwrite_existing"), bOverwriteExisting);
+	ResolvedActorSpec->TryGetBoolField(TEXT("overwrite_existing"), bOverwriteExisting);
 	const bool bAssemblyExists = MassBattleActorUnitEditorMCP::AssetExistsWithoutLoading(ObjectPath);
 	if (bAssemblyExists && !bOverwriteExisting)
 	{
@@ -1362,7 +2172,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromActor(const 
 			TEXT("overwrite_existing"));
 	}
 
-	TSharedPtr<FJsonObject> ResolvedVatSpec = MassBattleActorUnitEditorMCP::MakeResolvedVatSpec(Spec, ObjectPath);
+	TSharedPtr<FJsonObject> ResolvedVatSpec = MassBattleActorUnitEditorMCP::MakeResolvedVatSpec(ResolvedActorSpec, ObjectPath);
 	const bool bApplicable = !MassBattleActorUnitEditorMCP::HasErrors(Issues);
 	TSharedPtr<FJsonObject> Result = MassBattleActorUnitEditorMCP::MakeResult(true);
 	Result->SetStringField(TEXT("editor_workflow"), TEXT("Actor component assembly -> strict VAT unit authoring plan"));
@@ -1370,6 +2180,9 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromActor(const 
 	Result->SetStringField(TEXT("assembled_skeletal_mesh"), ObjectPath);
 	Result->SetStringField(TEXT("assembly_status"), bAssemblyExists ? (bOverwriteExisting ? TEXT("would_overwrite") : TEXT("blocked_existing")) : TEXT("would_create"));
 	Result->SetObjectField(TEXT("inspection"), Inspection);
+	Result->SetObjectField(TEXT("animation_resolution"), AnimationResolution);
+	Result->SetObjectField(TEXT("vat_sample_rate_resolution"), SampleRateResolution);
+	Result->SetObjectField(TEXT("vat_lod_resolution"), LodResolution);
 	Result->SetObjectField(TEXT("resolved_vat_spec"), ResolvedVatSpec);
 	Result->SetArrayField(TEXT("issues"), Issues);
 	return MassBattleActorUnitEditorMCP::ToJsonString(Result);
@@ -1424,7 +2237,17 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnitFromActor(const
 
 	FString AssembledMeshPath;
 	AssemblyResult->TryGetStringField(TEXT("assembled_skeletal_mesh"), AssembledMeshPath);
-	TSharedPtr<FJsonObject> ResolvedVatSpec = MassBattleActorUnitEditorMCP::MakeResolvedVatSpec(Spec, AssembledMeshPath);
+	TSharedPtr<FJsonObject> ResolvedVatSpec = MakeShared<FJsonObject>();
+	const TSharedPtr<FJsonObject>* PlannedVatSpec = nullptr;
+	if (Plan->TryGetObjectField(TEXT("resolved_vat_spec"), PlannedVatSpec) && PlannedVatSpec && PlannedVatSpec->IsValid())
+	{
+		ResolvedVatSpec->Values = (*PlannedVatSpec)->Values;
+		ResolvedVatSpec->SetStringField(TEXT("skeletal_mesh"), AssembledMeshPath);
+	}
+	else
+	{
+		ResolvedVatSpec = MassBattleActorUnitEditorMCP::MakeResolvedVatSpec(Spec, AssembledMeshPath);
+	}
 	const FString VatResultString = MCP_EditorApplyCreateVatUnit(MassBattleActorUnitEditorMCP::ToJsonString(ResolvedVatSpec), bSaveAssets);
 	TSharedPtr<FJsonObject> VatResult = MassBattleActorUnitEditorMCP::ParseObject(VatResultString);
 	const bool bVatSuccess = VatResult.IsValid() && VatResult->GetBoolField(TEXT("success"));

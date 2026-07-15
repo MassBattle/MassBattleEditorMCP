@@ -55,6 +55,17 @@ class ActorUnitAuthoringTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(command, "MCP_EditorPlanCreateVatUnitFromActor")
         self.assertEqual(json.loads(params["SpecJson"]), spec)
 
+    async def test_vat_animation_inspection_serializes_diagnostic_spec(self):
+        spec = {
+            "vat_data_asset": "/Game/Units/Gen/VAT_Infantry",
+            "skeletal_mesh": "/Game/Units/Gen/SKM_Infantry",
+        }
+        await server.editor_inspect_vat_animation(spec)
+
+        command, params = self.fake.calls[-1]
+        self.assertEqual(command, "MCP_EditorInspectVatAnimation")
+        self.assertEqual(json.loads(params["SpecJson"]), spec)
+
     async def test_apply_adds_compact_default_without_mutating_input(self):
         spec = {"actor_class": "/Game/Actors/BP_Infantry"}
         await server.editor_apply_create_vat_unit_from_actor(

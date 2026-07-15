@@ -166,6 +166,10 @@ FString CommandletDispatchInvocation(const TSharedPtr<FJsonObject>& Invocation)
 		Params->TryGetStringField(TEXT("actor_path"), ActorPath);
 		return UMassBattleUnitEditorMCPApi::MCP_EditorInspectActorAssembly(ActorPath, CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
 	}
+	if (Command == TEXT("MCP_EditorInspectVatAnimation") || Command == TEXT("editor_inspect_vat_animation"))
+	{
+		return UMassBattleUnitEditorMCPApi::MCP_EditorInspectVatAnimation(CommandletJsonFieldByNamesAsString(Params, { TEXT("SpecJson"), TEXT("spec") }));
+	}
 	if (Command == TEXT("MCP_EditorPlanCreateVatUnitFromActor") || Command == TEXT("editor_plan_create_vat_unit_from_actor"))
 	{
 		return UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromActor(CommandletJsonFieldByNamesAsString(Params, { TEXT("SpecJson"), TEXT("spec") }));

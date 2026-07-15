@@ -2952,6 +2952,7 @@ FString UMassBattleUnitMCPApi::MCP_UnitGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromSelection"), TEXT("unit_editor.create.diagnostic"), TEXT("Diagnostic: infer the DoAll spec from current selection or selected_assets and return it for review.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromSelection"), TEXT("unit_editor.create"), TEXT("Primary one-click current selection -> generate entry matching the MassBattleTools DoAll workflow.")));
 	Tools.Add(Tool(TEXT("MCP_EditorInspectActorAssembly"), TEXT("unit_editor.actor"), TEXT("Inspect an Actor's modular skeletal/static component assembly and weapon bindings.")));
+	Tools.Add(Tool(TEXT("MCP_EditorInspectVatAnimation"), TEXT("unit_editor.actor"), TEXT("Audit assembled skin weights, baked VAT position-frame motion, lookup UVs, and the selected animation profile.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanCreateVatUnitFromActor"), TEXT("unit_editor.actor"), TEXT("Plan Actor assembly followed by strict VAT unit authoring.")));
 	Tools.Add(Tool(TEXT("MCP_EditorApplyCreateVatUnitFromActor"), TEXT("unit_editor.actor"), TEXT("Assemble an Actor and weapon into an animation-compatible SkeletalMesh, then author the VAT unit.")));
 	Tools.Add(Tool(TEXT("MCP_EditorPlanOrganizeUnitAssets"), TEXT("unit_editor.organize"), TEXT("Plan moving a unit and its editor-generated linked assets into the selected style layout.")));

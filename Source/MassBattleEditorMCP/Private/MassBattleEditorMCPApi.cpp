@@ -1726,6 +1726,11 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("ActorPath, OptionsJson"),
 		TEXT("unit_editor.actor"));
 
+	AddTool(TEXT("MCP_EditorInspectVatAnimation"),
+		TEXT("检查组装骨骼权重、VAT 逐帧顶点位移、查找 UV 与实际烘焙动画全集"),
+		TEXT("SpecJson"),
+		TEXT("unit_editor.actor"));
+
 	AddTool(TEXT("MCP_EditorPlanCreateVatUnitFromActor"),
 		TEXT("规划 Actor 组件组装及后续严格 VAT 单位生成"),
 		TEXT("SpecJson"),

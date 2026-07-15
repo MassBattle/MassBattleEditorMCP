@@ -392,6 +392,15 @@ async def editor_inspect_actor_assembly(actor_path: str, options: Any = None) ->
 
 
 @mcp.tool()
+async def editor_inspect_vat_animation(spec: Any) -> Dict[str, Any]:
+    """Audit assembled skin weights, VAT position-frame motion, lookup UVs, and the baked soldier animation profile."""
+    return await get_connection().send_command(
+        "MCP_EditorInspectVatAnimation",
+        {"SpecJson": _json_arg(spec)},
+    )
+
+
+@mcp.tool()
 async def editor_plan_create_vat_unit_from_actor(spec: Any) -> Dict[str, Any]:
     """Plan Actor component assembly followed by strict VAT unit authoring without writing assets."""
     return await get_connection().send_command(

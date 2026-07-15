@@ -298,6 +298,7 @@ FString UMassBattleMCPBridge::InternalExecuteCommand(const FString& CommandType,
 	if (CommandType == TEXT("MCP_EditorPlanCreateVatUnitFromSelection")) { return UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromSelection(JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_EditorApplyCreateVatUnitFromSelection")) { return UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnitFromSelection(JsonParam(Params, TEXT("OptionsJson")), BoolParam(Params, TEXT("bSaveAssets"), true)); }
 	if (CommandType == TEXT("MCP_EditorInspectActorAssembly")) { return UMassBattleUnitEditorMCPApi::MCP_EditorInspectActorAssembly(StringParam(Params, TEXT("ActorPath")), JsonParam(Params, TEXT("OptionsJson"))); }
+	if (CommandType == TEXT("MCP_EditorInspectVatAnimation")) { return UMassBattleUnitEditorMCPApi::MCP_EditorInspectVatAnimation(JsonParam(Params, TEXT("SpecJson"))); }
 	if (CommandType == TEXT("MCP_EditorPlanCreateVatUnitFromActor")) { return UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnitFromActor(JsonParam(Params, TEXT("SpecJson"))); }
 	if (CommandType == TEXT("MCP_EditorApplyCreateVatUnitFromActor")) { return UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnitFromActor(JsonParam(Params, TEXT("SpecJson")), BoolParam(Params, TEXT("bSaveAssets"), true)); }
 	if (CommandType == TEXT("MCP_EditorPlanAddAnimationsToUnit")) { return UMassBattleUnitEditorMCPApi::MCP_EditorPlanAddAnimationsToUnit(StringParam(Params, TEXT("UnitPath")), JsonParam(Params, TEXT("SpecJson"))); }
