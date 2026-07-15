@@ -15,6 +15,7 @@
 #include "Editor.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/SkeletalMeshSocket.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
@@ -436,6 +437,167 @@ static FString ResolveBindBone(const UStaticMeshComponent* StaticComponent, cons
 		: FString();
 }
 
+static bool ResolveReferenceBoneToComponent(
+	const USkeletalMesh* SkeletalMesh,
+	const FName BoneName,
+	FTransform& OutBoneToComponent,
+	FString& OutError)
+{
+	if (!SkeletalMesh)
+	{
+		OutError = TEXT("The parent SkeletalMesh is missing.");
+		return false;
+	}
+
+	const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
+	const int32 BoneIndex = ReferenceSkeleton.FindBoneIndex(BoneName);
+	if (BoneIndex == INDEX_NONE)
+	{
+		OutError = FString::Printf(TEXT("Reference bone was not found: %s"), *BoneName.ToString());
+		return false;
+	}
+
+	const TArray<FTransform>& ReferencePose = ReferenceSkeleton.GetRawRefBonePose();
+	if (!ReferencePose.IsValidIndex(BoneIndex))
+	{
+		OutError = FString::Printf(TEXT("Reference pose is missing bone index %d (%s)."), BoneIndex, *BoneName.ToString());
+		return false;
+	}
+
+	OutBoneToComponent = ReferencePose[BoneIndex];
+	int32 ParentIndex = ReferenceSkeleton.GetRawParentIndex(BoneIndex);
+	while (ParentIndex != INDEX_NONE)
+	{
+		if (!ReferencePose.IsValidIndex(ParentIndex))
+		{
+			OutError = FString::Printf(TEXT("Reference pose is missing parent bone index %d for %s."), ParentIndex, *BoneName.ToString());
+			return false;
+		}
+		OutBoneToComponent *= ReferencePose[ParentIndex];
+		ParentIndex = ReferenceSkeleton.GetRawParentIndex(ParentIndex);
+	}
+	return true;
+}
+
+static bool ResolveReferenceSocketToComponent(
+	const USceneComponent* ParentComponent,
+	const FName SocketName,
+	FTransform& OutSocketToComponent,
+	FString& OutError)
+{
+	OutSocketToComponent = FTransform::Identity;
+	if (!ParentComponent || SocketName.IsNone())
+	{
+		return ParentComponent != nullptr;
+	}
+
+	if (const USkeletalMeshComponent* SkeletalComponent = Cast<USkeletalMeshComponent>(ParentComponent))
+	{
+		USkeletalMesh* SkeletalMesh = SkeletalComponent->GetSkeletalMeshAsset();
+		if (!SkeletalMesh)
+		{
+			OutError = FString::Printf(TEXT("Skeletal parent %s has no mesh."), *SkeletalComponent->GetName());
+			return false;
+		}
+
+		FName BoneName = SocketName;
+		FTransform SocketToBone = FTransform::Identity;
+		if (const USkeletalMeshSocket* Socket = SkeletalMesh->FindSocket(SocketName))
+		{
+			BoneName = Socket->BoneName;
+			SocketToBone = Socket->GetSocketLocalTransform();
+		}
+
+		FTransform BoneToComponent;
+		if (!ResolveReferenceBoneToComponent(SkeletalMesh, BoneName, BoneToComponent, OutError))
+		{
+			OutError = FString::Printf(
+				TEXT("Failed to resolve socket %s on %s in the reference pose: %s"),
+				*SocketName.ToString(),
+				*SkeletalComponent->GetName(),
+				*OutError);
+			return false;
+		}
+		OutSocketToComponent = SocketToBone * BoneToComponent;
+		return true;
+	}
+
+	if (!ParentComponent->DoesSocketExist(SocketName))
+	{
+		OutError = FString::Printf(TEXT("Socket %s was not found on parent component %s."), *SocketName.ToString(), *ParentComponent->GetName());
+		return false;
+	}
+	OutSocketToComponent = ParentComponent->GetSocketTransform(SocketName, RTS_Component);
+	return true;
+}
+
+static bool ResolveReferenceComponentToRootRecursive(
+	const USceneComponent* Component,
+	const USkeletalMeshComponent* RootComponent,
+	TSet<const USceneComponent*>& Visiting,
+	FTransform& OutComponentToRoot,
+	FString& OutError)
+{
+	if (!Component || !RootComponent)
+	{
+		OutError = TEXT("Component or root SkeletalMeshComponent is missing.");
+		return false;
+	}
+	if (Component == RootComponent)
+	{
+		OutComponentToRoot = FTransform::Identity;
+		return true;
+	}
+	if (Visiting.Contains(Component))
+	{
+		OutError = FString::Printf(TEXT("Attachment cycle detected at component %s."), *Component->GetName());
+		return false;
+	}
+	if (Component->IsUsingAbsoluteLocation() || Component->IsUsingAbsoluteRotation() || Component->IsUsingAbsoluteScale())
+	{
+		OutError = FString::Printf(
+			TEXT("Component %s uses an absolute transform channel; reference-pose Actor assembly requires fully relative attachment transforms."),
+			*Component->GetName());
+		return false;
+	}
+
+	const USceneComponent* ParentComponent = Component->GetAttachParent();
+	if (!ParentComponent)
+	{
+		OutError = FString::Printf(TEXT("Component %s is not attached beneath root component %s."), *Component->GetName(), *RootComponent->GetName());
+		return false;
+	}
+
+	Visiting.Add(Component);
+	FTransform ParentToRoot;
+	if (!ResolveReferenceComponentToRootRecursive(ParentComponent, RootComponent, Visiting, ParentToRoot, OutError))
+	{
+		Visiting.Remove(Component);
+		return false;
+	}
+
+	FTransform SocketToParent;
+	if (!ResolveReferenceSocketToComponent(ParentComponent, Component->GetAttachSocketName(), SocketToParent, OutError))
+	{
+		Visiting.Remove(Component);
+		return false;
+	}
+
+	OutComponentToRoot = Component->GetRelativeTransform() * SocketToParent * ParentToRoot;
+	Visiting.Remove(Component);
+	return true;
+}
+
+static bool ResolveReferenceComponentToRoot(
+	const USceneComponent* Component,
+	const USkeletalMeshComponent* RootComponent,
+	FTransform& OutComponentToRoot,
+	FString& OutError)
+{
+	TSet<const USceneComponent*> Visiting;
+	return ResolveReferenceComponentToRootRecursive(Component, RootComponent, Visiting, OutComponentToRoot, OutError);
+}
+
 static void DescribeComponents(FActorAssemblyContext& Context)
 {
 	TInlineComponentArray<UMeshComponent*> MeshComponents(Context.Actor);
@@ -457,8 +619,22 @@ static void DescribeComponents(FActorAssemblyContext& Context)
 			Description->SetStringField(TEXT("attach_socket"), SceneComponent->GetAttachSocketName().ToString());
 			if (Context.RootSkeletalComponent)
 			{
-				Description->SetObjectField(TEXT("relative_to_root"), TransformJson(
-					SceneComponent->GetComponentTransform().GetRelativeTransform(Context.RootSkeletalComponent->GetComponentTransform())));
+				const FTransform EvaluatedPoseTransform =
+					SceneComponent->GetComponentTransform().GetRelativeTransform(Context.RootSkeletalComponent->GetComponentTransform());
+				Description->SetObjectField(TEXT("relative_to_root"), TransformJson(EvaluatedPoseTransform));
+				Description->SetObjectField(TEXT("evaluated_pose_relative_to_root"), TransformJson(EvaluatedPoseTransform));
+				Description->SetObjectField(TEXT("attachment_relative"), TransformJson(SceneComponent->GetRelativeTransform()));
+				FTransform ReferencePoseTransform;
+				FString ReferencePoseError;
+				if (ResolveReferenceComponentToRoot(SceneComponent, Context.RootSkeletalComponent, ReferencePoseTransform, ReferencePoseError))
+				{
+					Description->SetObjectField(TEXT("reference_pose_relative_to_root"), TransformJson(ReferencePoseTransform));
+					Description->SetStringField(TEXT("assembly_transform_space"), TEXT("root_skeleton_reference_pose_model_space"));
+				}
+				else
+				{
+					Description->SetStringField(TEXT("reference_pose_transform_error"), ReferencePoseError);
+				}
 			}
 		}
 
@@ -632,6 +808,15 @@ static bool SpawnAndInspect(const TSharedPtr<FJsonObject>& Spec, FActorAssemblyC
 		{
 			AddIssue(Context.Issues, TEXT("warning"), TEXT("static_component_bound_to_root"),
 				FString::Printf(TEXT("Static component %s has no attach socket or explicit bind_bone and will bind to root bone %s."), *Component->GetName(), *BindBone));
+		}
+
+		FTransform ReferencePoseTransform;
+		FString ReferencePoseError;
+		if (!ResolveReferenceComponentToRoot(Component, Context.RootSkeletalComponent, ReferencePoseTransform, ReferencePoseError))
+		{
+			AddIssue(Context.Issues, TEXT("error"), TEXT("static_component_reference_transform_failed"),
+				FString::Printf(TEXT("Static component %s cannot be converted into root reference-pose model space: %s"), *Component->GetName(), *ReferencePoseError),
+				TEXT("component_overrides"));
 		}
 	}
 
@@ -1466,7 +1651,20 @@ static USkeletalMesh* ConvertStaticComponentToSkeletal(
 		TransformedStaticMesh->SetMaterial(MaterialIndex, Component->GetMaterial(MaterialIndex));
 	}
 
-	const FTransform ComponentToRoot = Component->GetComponentTransform().GetRelativeTransform(RootComponent->GetComponentTransform());
+	FTransform ComponentToRoot;
+	// StaticToSkeletalMeshConverter assigns the requested bone weight but does not
+	// change vertex coordinates into that bone's local space. Skeletal vertices
+	// must therefore enter in reference-pose model space. Baking the spawned
+	// component's evaluated socket transform here would apply the hand animation
+	// once now and a second time during normal skinning/VAT playback.
+	if (!ResolveReferenceComponentToRoot(Component, RootComponent, ComponentToRoot, OutError))
+	{
+		OutError = FString::Printf(
+			TEXT("Failed to convert StaticMesh component %s into root reference-pose model space: %s"),
+			*Component->GetName(),
+			*OutError);
+		return nullptr;
+	}
 	bool bTransformedAnyLod = false;
 	for (int32 LodIndex = 0; LodIndex < TransformedStaticMesh->GetNumSourceModels(); ++LodIndex)
 	{
