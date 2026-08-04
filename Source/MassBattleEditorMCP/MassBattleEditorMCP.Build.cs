@@ -42,6 +42,7 @@ public class MassBattleEditorMCP : ModuleRules
 				"NiagaraEditor",
 				"AnimToTexture",
 				"AnimToTextureEditor",
+				"AnimationBlueprintLibrary",
 				"MaterialEditor",
 				"StructUtils",
 				"AssetTools",

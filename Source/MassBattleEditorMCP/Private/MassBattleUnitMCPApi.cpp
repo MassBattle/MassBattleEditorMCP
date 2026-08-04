@@ -863,6 +863,27 @@ static bool ApplyPatch(UObject* Object, const TSharedPtr<FJsonObject>& Patch, bo
 		return true;
 	}
 
+	// JSON arrays are not valid Unreal ImportText syntax ("[]" vs "()"), and
+	// array-of-struct values should not be round-tripped through text anyway.
+	// Apply the reflected JSON value directly so an explicit empty array really
+	// clears inherited template entries such as Attack.SpawnProjectile.
+	if (Resolved.Property->IsA<FArrayProperty>())
+	{
+		const TSharedPtr<FJsonValue> Value = Patch->TryGetField(TEXT("value"));
+		if (!Value.IsValid() || Value->Type != EJson::Array)
+		{
+			OutPreview.Error = TEXT("set patch for an array property requires a JSON array value");
+			return false;
+		}
+		if (!ApplyJsonValueToProperty(Resolved.Property, Resolved.ValuePtr, Value, Object, Error))
+		{
+			OutPreview.Error = Error;
+			return false;
+		}
+		OutPreview.After = ExportProperty(Resolved.Property, Resolved.ValuePtr);
+		return true;
+	}
+
 	if (!ApplyImportText(Resolved.Property, Resolved.ValuePtr, OutPreview.After, Object, Error))
 	{
 		OutPreview.Error = Error;
@@ -1141,7 +1162,10 @@ static TSharedPtr<FJsonValue> PropertyToEffectiveJsonValue(FProperty* Property, 
 			const void* ChildValuePtr = Child->ContainerPtrToValuePtr<void>(ValuePtr);
 			const void* ChildDefaultPtr = DefaultValuePtr ? Child->ContainerPtrToValuePtr<void>(DefaultValuePtr) : nullptr;
 			TSharedPtr<FJsonValue> ChildValue = PropertyToEffectiveJsonValue(Child, ChildValuePtr, ChildDefaultPtr, Depth - 1, bOmitDefaults);
-			if (!JsonValueIsEmptyObjectOrArray(ChildValue))
+			// A full read with include_defaults=true is also used for authoritative
+			// verification. Preserve explicit empty containers in that mode so a
+			// cleared array can be distinguished from a field that was not read.
+			if (ChildValue.IsValid() && (!bOmitDefaults || !JsonValueIsEmptyObjectOrArray(ChildValue)))
 			{
 				Object->SetField(Child->GetName(), ChildValue);
 			}
@@ -1286,7 +1310,7 @@ static TSharedPtr<FJsonObject> BuildSourceAlignedUnitJson(UMassBattleAgentConfig
 		const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Unit);
 		const void* DefaultValuePtr = DefaultUnit ? Property->ContainerPtrToValuePtr<void>(DefaultUnit) : nullptr;
 		TSharedPtr<FJsonValue> Value = PropertyToEffectiveJsonValue(Property, ValuePtr, DefaultValuePtr, Depth, bOmitDefaults);
-		if (!JsonValueIsEmptyObjectOrArray(Value))
+		if (Value.IsValid() && (!bOmitDefaults || !JsonValueIsEmptyObjectOrArray(Value)))
 		{
 			Fields->SetField(FieldName, Value);
 		}
@@ -1824,6 +1848,21 @@ static void FlattenMergeValue(UObject* Target, const UObject* DefaultObject, con
 		if (!ArrayProperty)
 		{
 			AddMergeError(Errors, Path, TEXT("Array value can only be merged into an array property"));
+			return;
+		}
+
+		bool bReplaceArrays = false;
+		if (Options.IsValid())
+		{
+			Options->TryGetBoolField(TEXT("replace_arrays"), bReplaceArrays);
+			Options->TryGetBoolField(TEXT("replace_array_values"), bReplaceArrays);
+		}
+		if (bReplaceArrays)
+		{
+			// Union merge remains the default. Explicit replacement is required for
+			// authoritative manifests that need to remove inherited template entries,
+			// including clearing Attack.SpawnProjectile with an empty JSON array.
+			AddSetPatchForMerge(Target, Path, Value, Options, Patches, Errors);
 			return;
 		}
 

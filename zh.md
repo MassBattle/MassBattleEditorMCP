@@ -160,7 +160,7 @@ VAT 单位创建会先使用发现到的原始贴图；如果基于文件名的�
 
 模块化 SkeletalMesh 组件通过持久化编辑器 `MeshDescription` 合并。武器等可见 StaticMesh 附件会复制到根骨架的**参考姿势模型空间**，并刚性绑定到 Socket 解析出的骨骼。附件变换为 `ComponentRelative * SocketLocal * ReferenceBoneToRoot`。不能把动画求值姿势下的 Socket 变换烘进源顶点，否则后续骨骼蒙皮还会再次应用同一段骨骼动画。`editor_inspect_actor_assembly` 提供表示生成姿势的 `relative_to_root`，以及实际用于组合的 `reference_pose_relative_to_root`。源材质槽保持不变，其纹理表达式与包依赖用于填充生成的 VAT 材质输入。
 
-Actor 制作未传 `animations` 时，默认使用 `/Game/Unit/Action/Solider` 下的 10 个标准动画：Idle、Move、Appear、Attack、Hit 和 Death A-E。默认模式为 24 Hz BoneMode、四骨骼影响和动画混合等级 2。源动画关键帧会先重采样到配置的 VAT 采样率，再交给官方 AnimToTexture 烘焙；生成的材质实例同时保存全局层和 VAT 层的静态开关，包括 `UseVAT`、`BoneMode`、VAT UV 通道、骨骼影响数量和混合开关。
+Actor 制作未传 `animations` 时，默认使用 `/Game/Unit/Action/Solider` 下的 10 个标准动画：Idle、Move、Appear、Attack、Hit 和 Death A-E。默认模式为可配置的 30 Hz BoneMode、四骨骼影响和动画混合等级 2；Winyunq 等项目可以显式改用 24 Hz，而不改变插件默认值。源动画关键帧会先重采样到配置的 VAT 采样率，再交给官方 AnimToTexture 烘焙；生成的材质实例同时保存全局层和 VAT 层的静态开关，包括 `UseVAT`、`BoneMode`、VAT UV 通道、骨骼影响数量和混合开关。
 
 严格的非 selection VAT create 需要这些 canonical 字段：`skeletal_mesh`、`unit_name`、`target_package_path`、`parent_material`、`source_renderer_class`、`niagara_system`、`vat_sample_rate`、`animations`。Actor wrapper 会在进入严格流程前补齐文档约定的动画、采样率和 LOD 默认值。刷新已有单位使用 `target_unit`；新建单位还必须提供 `template_unit`、`target_unit_package_path`、`subtype`。刷新已生成资产时应传 `overwrite_existing=true` 和 `refresh_materials=true`，否则旧 StaticMesh 会阻止执行，避免静默复用白材质或无动画资产。
 

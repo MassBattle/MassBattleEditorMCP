@@ -95,7 +95,7 @@ Use Unit MCP only to apply an already-designed effect to a unit config. Use Niag
 4. Choose only the runtime protocol mapping: `Burst`, `Attached`, or `unsupported_pending_adapter`. Do not redesign the visual effect during this decision.
 5. Duplicate the exact source with `MCP_EffectDuplicateAsset`. Immediately run `MCP_NiagaraCompareSystems(..., {"mode":"exact"})`; stop if it is not an exact source-neutral clone. Exact mode defaults to a structural/compile-error gate without `ready_to_run`, because a new unsaved duplicate may not have entered Niagara's compile queue yet.
 6. Use `MCP_NiagaraReadGraph` before inserting or reconnecting nodes. Copy the full contextual node `reference`, stable pin identifier, and exact `stack_inputs[].name`; never infer GUIDs or pin names.
-7. Apply the smallest explicit adapter edit with `MCP_NiagaraApplyGraphEdit`. Add Mass Battle inputs, adapter modules, or typed Assignment state while leaving the visual subgraph unchanged. Probe first, then list every intentional stack/visual edge removal exactly in `validation.allowed_removed_edges`.
+7. Apply the smallest explicit adapter edit with `MCP_NiagaraApplyGraphEdit`. Add Mass Battle inputs, adapter modules, or typed Assignment state while leaving the visual subgraph unchanged. Probe first, then list every intentional stack/visual edge removal exactly in `validation.allowed_removed_edges`. If a local stack input becomes a linked parameter, also list only that input's exact removed Rapid Iteration name in `validation.allowed_removed_rapid_iteration_parameters`; this is not a blanket permission to lose other constants.
 8. Run `MCP_NiagaraCompareSystems(..., {"mode":"translation"})`. Reject undeclared edge removal, source module disablement, changed source pin defaults, timing/curve changes, renderer/material changes, lost events, or simulation-target changes.
 9. Save only after the graph-edit compile barrier, readiness, preservation, and translation comparison pass. Translation mode requires `ready_to_run` by default. Reload and compare again.
 10. Validate behavior in a paired test scene: original and translation receive the same transforms, parameters, seed policy, and trigger times. Capture synchronized frames or SimCache evidence. Report any difference; never label an untested result “perfect”.
@@ -276,7 +276,7 @@ For an object-backed DI, use a concrete property write rather than assuming inse
 }
 ```
 
-The preservation gate compares system/emitter timing and determinism settings, emitters, renderer/material properties, CPU/GPU sim targets, event handlers, existing user-parameter defaults, Rapid Iteration values, pre-existing module identity/enabled state, graph-node identity, and original graph-pin defaults. It reports edge diffs and rejects removed source edges unless they exactly match `validation.allowed_removed_edges` (or the caller explicitly uses the unsafe `allow_removed_edges=true`). Niagara can regenerate a duplicated pin's `PersistentGuid` during compilation; compare its stable node-local ordinal, direction, name, defaults, and edges rather than treating that generated GUID alone as authored semantics. Saving is blocked on compile errors, failed preservation, undeclared edge removal, or a not-ready system.
+The preservation gate compares system/emitter timing and determinism settings, emitters, renderer/material properties, CPU/GPU sim targets, event handlers, existing user-parameter defaults, Rapid Iteration values, pre-existing module identity/enabled state, graph-node identity, and original graph-pin defaults. It reports edge diffs and rejects removed source edges unless they exactly match `validation.allowed_removed_edges` (or the caller explicitly uses the unsafe `allow_removed_edges=true`). A local-to-linked stack-input edit may remove only exact Rapid Iteration parameters declared in `validation.allowed_removed_rapid_iteration_parameters`; removed edges are still checked separately. Niagara can regenerate a duplicated pin's `PersistentGuid` during compilation; compare its stable node-local ordinal, direction, name, defaults, and edges rather than treating that generated GUID alone as authored semantics. Saving is blocked on compile errors, failed preservation, undeclared edge removal, undeclared Rapid Iteration removal, or a not-ready system.
 
 Translation comparison canonicalizes the source and target root object/package paths before fingerprinting, so an exact duplicate can match despite living in a new package. `mode=exact` permits no semantic additions. `mode=translation` permits additive adapter parameters/modules/edges while requiring all source semantics to remain present.
 
@@ -298,7 +298,8 @@ Use one reviewed edit plan per source; never apply one guessed plan to heterogen
         "operations": [],
         "validation": {
           "require_ready_to_run": true,
-          "allowed_removed_edges": []
+          "allowed_removed_edges": [],
+          "allowed_removed_rapid_iteration_parameters": []
         }
       },
       "comparison": {

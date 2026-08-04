@@ -255,6 +255,181 @@ static void MergeJsonObjects(TSharedPtr<FJsonObject> Target, const TSharedPtr<FJ
 	}
 }
 
+static TSharedPtr<FJsonValue> FindJsonValueAtPath(const TSharedPtr<FJsonObject>& Root, const FString& Path)
+{
+	if (!Root.IsValid() || Path.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	TArray<FString> Segments;
+	Path.ParseIntoArray(Segments, TEXT("."), true);
+	if (Segments.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> Current = Root;
+	for (int32 Index = 0; Index < Segments.Num(); ++Index)
+	{
+		TSharedPtr<FJsonValue> Value = Current->TryGetField(Segments[Index]);
+		if (!Value.IsValid())
+		{
+			return nullptr;
+		}
+		if (Index == Segments.Num() - 1)
+		{
+			return Value;
+		}
+		if (Value->Type != EJson::Object)
+		{
+			return nullptr;
+		}
+		Current = Value->AsObject();
+	}
+	return nullptr;
+}
+
+static bool TryGetJsonNumberAtPath(const TSharedPtr<FJsonObject>& Root, const FString& Path, double& OutValue)
+{
+	const TSharedPtr<FJsonValue> Value = FindJsonValueAtPath(Root, Path);
+	if (!Value.IsValid() || Value->Type != EJson::Number)
+	{
+		return false;
+	}
+	OutValue = Value->AsNumber();
+	return true;
+}
+
+static bool SetJsonNumberAtPath(const TSharedPtr<FJsonObject>& Root, const FString& Path, const double Value)
+{
+	if (!Root.IsValid() || Path.IsEmpty())
+	{
+		return false;
+	}
+
+	TArray<FString> Segments;
+	Path.ParseIntoArray(Segments, TEXT("."), true);
+	if (Segments.IsEmpty())
+	{
+		return false;
+	}
+
+	TSharedPtr<FJsonObject> Current = Root;
+	for (int32 Index = 0; Index < Segments.Num() - 1; ++Index)
+	{
+		TSharedPtr<FJsonValue> Existing = Current->TryGetField(Segments[Index]);
+		if (Existing.IsValid())
+		{
+			if (Existing->Type != EJson::Object)
+			{
+				return false;
+			}
+			Current = Existing->AsObject();
+		}
+		else
+		{
+			TSharedPtr<FJsonObject> Child = MakeShared<FJsonObject>();
+			Current->SetObjectField(Segments[Index], Child);
+			Current = Child;
+		}
+	}
+
+	Current->SetNumberField(Segments.Last(), Value);
+	return true;
+}
+
+static bool ApplyConfiguredNumberDerivations(
+	const TSharedPtr<FJsonObject>& Recipe,
+	const TSharedPtr<FJsonObject>& UnitPatch,
+	const TSharedPtr<FJsonObject>& ExplicitUnitPatch,
+	TArray<TSharedPtr<FJsonValue>>& OutResults,
+	FString& OutError)
+{
+	const TArray<TSharedPtr<FJsonValue>>* Rules = nullptr;
+	if (!Recipe.IsValid() || !Recipe->TryGetArrayField(TEXT("default_unit_patch_derivations"), Rules) || !Rules)
+	{
+		return true;
+	}
+
+	for (int32 RuleIndex = 0; RuleIndex < Rules->Num(); ++RuleIndex)
+	{
+		const TSharedPtr<FJsonValue>& RuleValue = (*Rules)[RuleIndex];
+		if (!RuleValue.IsValid() || RuleValue->Type != EJson::Object)
+		{
+			OutError = FString::Printf(TEXT("default_unit_patch_derivations[%d] must be an object."), RuleIndex);
+			return false;
+		}
+
+		const TSharedPtr<FJsonObject> Rule = RuleValue->AsObject();
+		FString SourcePath;
+		if (!Rule->TryGetStringField(TEXT("source"), SourcePath) || SourcePath.IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("default_unit_patch_derivations[%d].source must be a non-empty JSON path."), RuleIndex);
+			return false;
+		}
+
+		double SourceValue = 0.0;
+		if (!TryGetJsonNumberAtPath(UnitPatch, SourcePath, SourceValue) || !FMath::IsFinite(SourceValue))
+		{
+			OutError = FString::Printf(TEXT("default_unit_patch_derivations[%d] source '%s' is missing or is not a finite number."), RuleIndex, *SourcePath);
+			return false;
+		}
+
+		double Multiplier = 1.0;
+		if (Rule->HasField(TEXT("multiplier")) && (!Rule->TryGetNumberField(TEXT("multiplier"), Multiplier) || !FMath::IsFinite(Multiplier)))
+		{
+			OutError = FString::Printf(TEXT("default_unit_patch_derivations[%d].multiplier must be a finite number."), RuleIndex);
+			return false;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* Targets = nullptr;
+		if (!Rule->TryGetArrayField(TEXT("targets"), Targets) || !Targets || Targets->IsEmpty())
+		{
+			OutError = FString::Printf(TEXT("default_unit_patch_derivations[%d].targets must contain at least one JSON path."), RuleIndex);
+			return false;
+		}
+
+		bool bUnlessExplicit = true;
+		Rule->TryGetBoolField(TEXT("unless_explicit"), bUnlessExplicit);
+		for (int32 TargetIndex = 0; TargetIndex < Targets->Num(); ++TargetIndex)
+		{
+			FString TargetPath;
+			if (!(*Targets)[TargetIndex].IsValid() || !(*Targets)[TargetIndex]->TryGetString(TargetPath) || TargetPath.IsEmpty())
+			{
+				OutError = FString::Printf(TEXT("default_unit_patch_derivations[%d].targets[%d] must be a non-empty JSON path."), RuleIndex, TargetIndex);
+				return false;
+			}
+
+			TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+			Result->SetStringField(TEXT("source"), SourcePath);
+			Result->SetStringField(TEXT("target"), TargetPath);
+			Result->SetNumberField(TEXT("source_value"), SourceValue);
+			Result->SetNumberField(TEXT("multiplier"), Multiplier);
+
+			if (bUnlessExplicit && FindJsonValueAtPath(ExplicitUnitPatch, TargetPath).IsValid())
+			{
+				Result->SetBoolField(TEXT("applied"), false);
+				Result->SetStringField(TEXT("reason"), TEXT("explicit_target_preserved"));
+				OutResults.Add(MakeShared<FJsonValueObject>(Result));
+				continue;
+			}
+
+			const double DerivedValue = SourceValue * Multiplier;
+			if (!FMath::IsFinite(DerivedValue) || !SetJsonNumberAtPath(UnitPatch, TargetPath, DerivedValue))
+			{
+				OutError = FString::Printf(TEXT("default_unit_patch_derivations[%d] could not write finite derived value to '%s'."), RuleIndex, *TargetPath);
+				return false;
+			}
+
+			Result->SetBoolField(TEXT("applied"), true);
+			Result->SetNumberField(TEXT("value"), DerivedValue);
+			OutResults.Add(MakeShared<FJsonValueObject>(Result));
+		}
+	}
+	return true;
+}
+
 static TSharedPtr<FJsonObject> BuildAnimMergePatch(const TSharedPtr<FJsonObject>& Spec, const TSharedPtr<FJsonObject>& AnimsData)
 {
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
@@ -1107,7 +1282,7 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 		return Root;
 	}
 
-	const float SampleRate = FloatFieldByNamesOrDefault(Spec, { TEXT("vat_sample_rate"), TEXT("sample_rate"), TEXT("VATSampleRate") }, 24.0f);
+	const float SampleRate = FloatFieldByNamesOrDefault(Spec, { TEXT("vat_sample_rate"), TEXT("sample_rate"), TEXT("VATSampleRate") }, 30.0f);
 	const int32 UVChannel = FMath::Clamp(IntFieldByNamesOrDefault(Spec, { TEXT("vat_uv_channel"), TEXT("uv_channel"), TEXT("VATUVChannel") }, 1), 0, 3);
 	const bool bEnforcePowerOfTwo = BoolFieldByNamesOrDefault(Spec, { TEXT("enforce_power_of_two"), TEXT("EnforcePowerOfTwo") }, false);
 	const int32 MaxHeight = FMath::Max(1, IntFieldByNamesOrDefault(Spec, { TEXT("vat_max_height"), TEXT("max_height") }, 8192));
@@ -1247,15 +1422,21 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 			DataAsset->VertexNormalTexture = CreateOrLoadTexture2DAsset(GeneratedPackagePath, FString::Printf(TEXT("VAT_%s_VertNormal%s"), *AssetSlug, *LodSuffix), OutSavePaths);
 		}
 
-		const bool bBakeSuccess = UAnimToTextureBPLibrary::AnimationToTexture(DataAsset);
+		FString BakeError;
+		const bool bBakeSuccess = UMassBattleFuncLibEd::BakeMassBattleVAT(DataAsset, SampleRate, BakeError);
 		TSharedPtr<FJsonObject> LodResult = MakeShared<FJsonObject>();
 		LodResult->SetNumberField(TEXT("lod_index"), LOD.LODIndex);
 		LodResult->SetStringField(TEXT("mode"), LOD.Mode == EVATBakeMode::BoneMode ? TEXT("BoneMode") : TEXT("VertexMode"));
 		LodResult->SetBoolField(TEXT("bake_success"), bBakeSuccess);
+		LodResult->SetStringField(TEXT("bake_helper"), TEXT("MassBattleFrame.BakeMassBattleVAT"));
 		if (!bBakeSuccess)
 		{
 			Root->SetBoolField(TEXT("success"), false);
-			Root->SetStringField(TEXT("error"), FString::Printf(TEXT("AnimationToTexture failed for LOD %d."), LOD.LODIndex));
+			Root->SetStringField(
+				TEXT("error"),
+				BakeError.IsEmpty()
+					? FString::Printf(TEXT("MassBattle VAT bake failed for LOD %d."), LOD.LODIndex)
+					: FString::Printf(TEXT("MassBattle VAT bake failed for LOD %d: %s"), LOD.LODIndex, *BakeError));
 			LodResults.Add(MakeShared<FJsonValueObject>(LodResult));
 			Root->SetArrayField(TEXT("lod_results"), LodResults);
 			Root->SetArrayField(TEXT("warnings"), Warnings);
@@ -3100,8 +3281,8 @@ static TSharedPtr<FJsonObject> BuildCreateVatUnitSpecFromSelection(const TShared
 
 	if (!HasAnyField(Spec, { TEXT("vat_sample_rate"), TEXT("sample_rate"), TEXT("VATSampleRate") }))
 	{
-		Spec->SetNumberField(TEXT("vat_sample_rate"), 24.0);
-		AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_vat_sample_rate"), TEXT("vat_sample_rate was not supplied; using 24 Hz sampling. Runtime rendering can interpolate if supported."), TEXT("vat_sample_rate"));
+		Spec->SetNumberField(TEXT("vat_sample_rate"), 30.0);
+		AddIssue(Warnings, TEXT("warning"), TEXT("defaulted_vat_sample_rate"), TEXT("vat_sample_rate was not supplied; using the generic 30 Hz default. Projects can override it explicitly."), TEXT("vat_sample_rate"));
 	}
 
 	TSharedPtr<FJsonObject> Root = MakeSuccess();
@@ -5050,14 +5231,31 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	GeneratedRoot->SetObjectField(TEXT("Data"), GeneratedData);
 	MassBattleUnitEditorMCP::MergeJsonObjects(UnitPatch, GeneratedRoot);
 
+	TSharedPtr<FJsonObject> ExplicitUnitPatch;
 	const TSharedPtr<FJsonObject>* ExtraUnitPatch = nullptr;
 	if (Spec->TryGetObjectField(TEXT("unit_patch"), ExtraUnitPatch) && ExtraUnitPatch && ExtraUnitPatch->IsValid())
 	{
+		ExplicitUnitPatch = *ExtraUnitPatch;
 		MassBattleUnitEditorMCP::MergeJsonObjects(UnitPatch, *ExtraUnitPatch);
+	}
+
+	TArray<TSharedPtr<FJsonValue>> DerivedDefaults;
+	FString DerivationError;
+	if (!MassBattleUnitEditorMCP::ApplyConfiguredNumberDerivations(Recipe, UnitPatch, ExplicitUnitPatch, DerivedDefaults, DerivationError))
+	{
+		return MassBattleUnitEditorMCP::MakeErrorJson(DerivationError);
+	}
+	if (!DerivedDefaults.IsEmpty())
+	{
+		Discovery->SetArrayField(TEXT("default_unit_patch_derivations"), DerivedDefaults);
 	}
 
 	TSharedPtr<FJsonObject> Options = MakeShared<FJsonObject>();
 	Options->SetBoolField(TEXT("expected_before"), true);
+	bool bReplaceArrays = false;
+	Spec->TryGetBoolField(TEXT("replace_arrays"), bReplaceArrays);
+	Spec->TryGetBoolField(TEXT("replace_array_values"), bReplaceArrays);
+	Options->SetBoolField(TEXT("replace_arrays"), bReplaceArrays);
 	UnitPatch->SetObjectField(TEXT("options"), Options);
 
 	FString ExistingUnitPath;
@@ -5111,7 +5309,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_materials"), TEXT("MCP_CreateMaterialInstanceForStaticMeshWithLODs"), ParentMaterialPath.IsEmpty() ? TEXT("blocked") : TEXT("planned"), TEXT("Create material instances for the generated static mesh LOD material slots."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("resolve_material_texture_sources"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), MassBattleUnitEditorMCP::HasMaterialOverrides(Spec) ? TEXT("planned") : TEXT("skipped"), TEXT("Use explicit source materials to populate VAT texture inputs while preserving generated VAT material instances."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_vat_data_and_textures"), TEXT("MassBattleTools.CreateDataAsset/CreateVATTextures"), TEXT("planned"), TEXT("Create or reuse AnimToTextureDataAsset and VAT Texture2D assets."));
-	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("bake_vat_textures"), TEXT("UAnimToTextureBPLibrary.AnimationToTexture"), TEXT("planned"), TEXT("Bake animation frames into VAT textures using the MassBattleTools DoAll flow."));
+	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("bake_vat_textures"), TEXT("UMassBattleFuncLibEd.BakeMassBattleVAT"), TEXT("planned"), TEXT("Bake animation frames into VAT textures through the MassBattleFrame helper while preserving source model-space root transforms and refreshing the UV cache."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("update_vat_materials"), TEXT("UAnimToTextureBPLibrary.UpdateMaterialInstanceFromDataAsset"), TEXT("planned"), TEXT("Write baked VAT and AnimData texture parameters into generated material instances."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("duplicate_renderer"), TEXT("MCP_DuplicateClassAsset"), TEXT("planned"), TEXT("Duplicate or reuse a renderer Blueprint class for the unit subtype."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("set_renderer_defaults"), TEXT("MCP_SetClassDefaultProperties"), TEXT("planned"), TEXT("Set renderer CDO mesh, Niagara system, and SubType after generated assets exist."));
@@ -5349,7 +5547,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 
 	const bool bBakeVat = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") }, true);
 	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("create_vat_data_and_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Create or reuse AnimToTextureDataAsset and VAT Texture2D assets."));
-	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("bake_vat_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Run UAnimToTextureBPLibrary::AnimationToTexture for each LOD setting."));
+	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("bake_vat_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Run UMassBattleFuncLibEd::BakeMassBattleVAT for each LOD setting."));
 	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("update_vat_materials"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Update VAT material instance parameters from the baked DataAsset."));
 
 	if (!RendererClassPath.IsEmpty() && MassBattleUnitEditorMCP::AssetExists(RendererClassPath))
@@ -5569,7 +5767,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	const FString RendererAssetName = MassBattleUnitEditorMCP::StringFieldOrDefault(Layout, TEXT("renderer_asset_name"), MassBattleUnitEditorMCP::AssetNameFromObjectPath(RendererClassPath));
 	const FString RendererPackagePath = MassBattleUnitEditorMCP::PackagePathFromObjectPath(RendererClassPath);
 	TArray<FString> GeneratedVatSavePaths;
-	int32 GeneratedVatSampleRate = 24;
+	int32 GeneratedVatSampleRate = 30;
 
 	bool bOverwriteExisting = false;
 	Spec->TryGetBoolField(TEXT("overwrite_existing"), bOverwriteExisting);
@@ -5679,7 +5877,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	bool bVatBakeCompleted = false;
 	if (bBakeVat)
 	{
-		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("bake_vat_textures"), TEXT("MassBattleTools.CreateVATTextures -> AnimationToTexture -> UpdateMaterialInstance"), TEXT("running"), TEXT("Baking VAT textures and updating generated material instances."));
+		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("bake_vat_textures"), TEXT("MassBattleTools.CreateVATTextures -> MassBattleFrame.BakeMassBattleVAT -> UpdateMaterialInstance"), TEXT("running"), TEXT("Baking VAT textures through the MassBattleFrame helper and updating generated material instances."));
 		TSharedPtr<FJsonObject> BakeResult = MassBattleUnitEditorMCP::BakeVatWithMassBattleToolsFlow(Spec, Discovery, SkeletalMeshPath, StaticMeshPath, GeneratedPackagePath, AssetSlug, VatDataAssetName, UnitPatch, GeneratedVatSavePaths);
 		Step->SetObjectField(TEXT("result"), BakeResult);
 		if (!BakeResult.IsValid() || !BakeResult->GetBoolField(TEXT("success")))
@@ -5691,7 +5889,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 		}
 		else
 		{
-			double SampleRateNumber = 24.0;
+			double SampleRateNumber = 30.0;
 			BakeResult->TryGetNumberField(TEXT("sample_rate"), SampleRateNumber);
 			GeneratedVatSampleRate = static_cast<int32>(SampleRateNumber);
 			bVatBakeCompleted = true;
@@ -6040,6 +6238,17 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanOrganizeUnitAssets(const FStr
 			return A.ObjectPath < B.ObjectPath;
 		});
 	}
+	bool bRestrictToCurrentPackagePath = false;
+	Options->TryGetBoolField(TEXT("restrict_to_current_package_path"), bRestrictToCurrentPackagePath);
+	if (bRestrictToCurrentPackagePath)
+	{
+		LinkedAssets.RemoveAll(
+			[&CurrentUnitPackagePath](const MassBattleUnitEditorMCP::FOrganizeAssetRef& Asset)
+			{
+				return !Asset.PackagePath.Equals(
+					CurrentUnitPackagePath, ESearchCase::IgnoreCase);
+			});
+	}
 	TArray<TSharedPtr<FJsonValue>> Moves;
 	TSet<FString> PlannedDestinations;
 	int32 MoveCount = 0;
@@ -6114,6 +6323,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanOrganizeUnitAssets(const FStr
 	Root->SetStringField(TEXT("target_package_path"), TargetPackagePath);
 	Root->SetNumberField(TEXT("dependency_depth"), MaxDependencyDepth);
 	Root->SetBoolField(TEXT("include_sibling_assets"), bIncludeSiblingAssets);
+	Root->SetBoolField(TEXT("restrict_to_current_package_path"), bRestrictToCurrentPackagePath);
 	Root->SetBoolField(TEXT("allow_plugin_content"), bAllowPluginContent);
 	Root->SetBoolField(TEXT("applicable"), BlockedCount == 0);
 	Root->SetNumberField(TEXT("asset_count"), LinkedAssets.Num());

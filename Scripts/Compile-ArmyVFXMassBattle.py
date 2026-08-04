@@ -483,6 +483,47 @@ def burst_edit_for(system: dict[str, Any]) -> tuple[dict[str, Any] | None, list[
                     "module_asset": SET_PARAMS_MODULE,
                     "stack_index": read_index + 1,
                 },
+                {
+                    # NM_BurstFxReadFromNDC writes these four particle
+                    # attributes.  NM_SetBurstFxParams exposes matching module
+                    # inputs, but an inserted module otherwise retains its
+                    # zero/identity local defaults and renders every event at
+                    # the renderer origin.  Bind the adapter explicitly so a
+                    # generated NativeBurst system preserves the event's LWC
+                    # position, local location, orientation, and scale.
+                    "op": "set_stack_inputs",
+                    "node": {"operation": f"{emitter_slug}_burst_params"},
+                    "inputs": [
+                        {
+                            "input": "BurstPosition",
+                            "value": {
+                                "mode": "linked_parameter",
+                                "parameter": "Particles.BurstPosition",
+                            },
+                        },
+                        {
+                            "input": "BurstLocation",
+                            "value": {
+                                "mode": "linked_parameter",
+                                "parameter": "Particles.BurstLocation",
+                            },
+                        },
+                        {
+                            "input": "BurstOrientation",
+                            "value": {
+                                "mode": "linked_parameter",
+                                "parameter": "Particles.BurstOrientation",
+                            },
+                        },
+                        {
+                            "input": "BurstScale",
+                            "value": {
+                                "mode": "linked_parameter",
+                                "parameter": "Particles.BurstScale",
+                            },
+                        },
+                    ],
+                },
             ]
         )
 

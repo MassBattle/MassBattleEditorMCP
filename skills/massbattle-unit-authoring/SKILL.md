@@ -7,6 +7,20 @@ description: Create, inspect, edit, delete, and validate MassBattle unit assets 
 
 Use UE editor APIs, commandlets, or the MassBattleEditorMCP tools. Do not edit `.uasset` files directly. Keep names and paths aligned with existing MassBattle source conventions; prefer cloning a nearby official/demo unit template and applying a small union patch.
 
+## Project Contract Discovery
+
+Before choosing a unit name, package path, scale, balance value, damage, defence, or historical input, search the current project for an explicit unit-design contract and read it completely. In the Winyunq project, `Docs/MassBattle/Winyunq_MassBattleFrame_Unit_Design.md` is the mandatory source of truth and has higher priority than this generic skill, style defaults, template values, generated manifests, and existing legacy assets.
+
+Use this authority order for project decisions:
+
+1. the user's current explicit instruction;
+2. the project's canonical unit-design contract and its machine-readable manifests;
+3. unit-family supplement documents;
+4. this generic workflow skill;
+5. style defaults, demo templates, and legacy asset examples.
+
+Templates may supply UObject class/layout and required structural fields only. Do not inherit their unit name, directory, scale, movement, range, attack cadence, damage, defence, or presentation naming. A source-model ID is not a formal `unit_name`. Existing paths containing implementation terms such as `MCPGenerated`, `MCP`, or `AgentConfig` are migration inputs, not naming precedents, unless the project contract explicitly says otherwise.
+
 ## Combat Authoring Routing
 
 Choose gameplay authority before editing any visual array:
@@ -58,7 +72,7 @@ Use `editor_apply_create_vat_unit_from_actor` when an Actor Blueprint defines th
 3. Use `component_overrides` entries keyed by canonical `component`. A SkeletalMesh component can receive `skeletal_mesh`; a StaticMesh component can receive `static_mesh`; mesh components can receive `materials`. Use `visible`, `clear_mesh`, and `bind_bone` only when the Actor defaults are not the intended output.
 4. Set `root_component` only when automatic root selection is ambiguous. All included modular skeletal parts must use compatible skeletons and share the root's model space.
 5. Keep attached StaticMesh vertices in the root skeleton's reference-pose model space. The converter composes `ComponentRelative * SocketLocal * ReferenceBoneToRoot` and rigidly weights the attachment to the resolved bone. Do not add a manual left/right-hand, axis, or evaluated-pose correction unless the source Actor itself is authored incorrectly.
-6. Omit `animations`, `vat_sample_rate`, and `lod_settings` to use the Actor wrapper defaults: the 10 canonical `/Game/Unit/Action/Solider` sequences, 24 Hz resampling, and LOD0 BoneMode with animation blend level 2. Pass explicit compatible animations when the Actor uses another skeleton or animation set.
+6. Omit `animations`, `vat_sample_rate`, and `lod_settings` to use the Actor wrapper defaults: the 10 canonical `/Game/Unit/Action/Solider` sequences, 30 Hz resampling, and LOD0 BoneMode with animation blend level 2. Projects can explicitly select another positive rate such as 24 Hz. Pass explicit compatible animations when the Actor uses another skeleton or animation set.
 7. Call `editor_apply_create_vat_unit_from_actor` directly. Use `editor_plan_create_vat_unit_from_actor` only for an explicit dry run or after an apply reports a planning error. Pass `overwrite_existing=true` when replacing an existing assembled mesh or generated output.
 8. Require top-level `success=true`, then inspect `assembly`, `resolved_vat_spec`, and `vat_result`. Read the generated AgentConfig with `unit_get`; use `editor_inspect_vat_animation` when animation, skin-weight, lookup-UV, or VAT-material correctness is in question.
 
@@ -98,70 +112,15 @@ The editor MCP must reject incomplete VAT unit creation instead of generating pa
 
 ## Defaults
 
-Use style defaults for boilerplate: package roots, family naming, renderer/LOD defaults, and common projectile/effect/sound bindings. Keep per-unit specs small:
+After resolving the project contract, use style defaults only for boilerplate that the project leaves unspecified, such as renderer/LOD defaults and common projectile/effect/sound bindings. Never let a style profile override project package roots, semantic naming, scale, or balance. Keep per-unit specs small:
 
 - `material_overrides` for skins or flag/country variants.
 - `source_renderer_class` and `niagara_system` for renderer binding.
 - `unit_patch` for gameplay changes such as `SubType`, `Trace`, `Attack`, `Damage`, and `Visualize`.
 
-## Balance Baseline (Confirmed)
+## Project-Specific Naming And Balance
 
-Project scale definition for this game:
-
-- `1 格 = 16 uu = 1 km`
-- Use old-game "格/秒" as balance baseline and convert to runtime uu/second.
-
-### Movement formula
-
-1. Let `H_kmh` be historical speed in km/h.
-2. `v = H_kmh / 3.6` (m/s).
-3. `Move格/秒 = 16 × ln(1 + v) / ln(1 + 4 / 3.6)`
-4. `Move uu/秒 = 16 × Move格/秒`
-
-This keeps:
-- 步兵 4 km/h -> 16 格/秒 -> 256 uu/秒 (old 1.00)
-- 坦克 40 km/h -> 53.4 格/秒 -> 854 uu/秒 (old ~3.34)
-
-Old unit scale check:
-- `Move_旧格每秒 = Move格每秒 / 16`
-
-### Range formula
-
-1. Let `R_m` be effective combat range in meters.
-2. `Range_格 = 64 × ln(1 + R_m / 10) / ln(1 + 500 / 10)`
-3. `Range uu = 16 × Range_格`
-
-This keeps:
-- 步兵 500m -> 64 格 -> 1024 uu (old 4.00)
-- 5.8km炮兵有效射程 -> ~113 格 -> ~1800 uu (old ~7.1)
-
-Old unit scale check:
-- `Range_旧格 = Range_格 / 16`
-
-### Runtime mobility-firing hard rule
-
-To prevent indefinite tank kiting, apply movement-fire penalties when a unit is moving and firing:
-- `Range_移动开火 = 原射程 × 0.6`
-- `Damage_移动开火 = 原伤害 × 0.5`
-
-This is a gameplay rule for balance, not a replacement formula.
-
-When adjusting infantry (Japanese, China, UK, Soviet, Germany, etc.):
-
-1. Find the unit by `unit_list` (scope your style roots).
-2. Read unit in simple mode (`unit_get`) and capture required fields.
-3. Build `unit_patch` with new `Move.XY.MoveSpeed` and `Attack.Range` in uu.
-4. Apply via `unit_write`.
-5. Verify with `unit_get`.
-
-Example:
-- 步兵（H=4, R=500）=> `MoveSpeed=256`，`Attack.Range=1024`
-
-Known validated examples in Winyunq:
-
-- City flag: `/Game/Unit/Actor/Building/City/AgentConfigCity.AgentConfigCity`
-- China infantry: `/Game/Unit/Actor/Army/Soldier/China/MCPGenerated/Gen_MCP_ChinaInfantry_A/AgentConfig_MCP_ChinaInfantry_A.AgentConfig_MCP_ChinaInfantry_A`
-- China officer: `/Game/Unit/Actor/Army/Officer/China/MCPGenerated/Gen_MCP_ChinaOfficer_A/AgentConfig_MCP_ChinaOfficer_A.AgentConfig_MCP_ChinaOfficer_A`
+Do not duplicate a project's conversion formulas, naming examples, or current values in this skill. Read them from the canonical project contract and its machine-readable inputs on every task. This prevents a cached skill example from silently overriding a newer project rule.
 
 ## Verification
 

@@ -7,6 +7,7 @@
 class UCameraComponent;
 class USceneComponent;
 class UTextRenderComponent;
+class UMassBattleBPTaskAgentsChaseAttack;
 
 /** Editor-only PIE harness for exercising MassBattle NDC burst renderers. */
 UCLASS(Blueprintable)
@@ -25,8 +26,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test", meta = (ClampMin = "0.1"))
 	float InitialDelay = 2.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test", meta = (ClampMin = "1.0"))
+	// Short-lived muzzle flashes need a sub-second cadence for deterministic
+	// screenshot QA; this actor is an editor-only test harness.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test", meta = (ClampMin = "0.05"))
 	float LoopInterval = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test")
+	bool bLogDiagnostics = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test", meta = (ClampMin = "1", ClampMax = "4"))
 	int32 GridSide = 2;
@@ -39,6 +45,12 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test")
 	int32 ExplosionSubType = 41;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test", meta = (ClampMin = "0.001"))
+	float MuzzleScale = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test", meta = (ClampMin = "0.001"))
+	float ExplosionScale = 0.30f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MassBattle Batch FX Test")
 	FVector MuzzleCenter = FVector(-250.0, -700.0, 150.0);
@@ -54,6 +66,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, CallInEditor, Category = "MassBattle Batch FX Test")
 	void TriggerAll();
+
+	/** Keeps the acceptance ChaseAttack async task alive for the full PIE run. */
+	UPROPERTY(Transient)
+	TObjectPtr<UMassBattleBPTaskAgentsChaseAttack> AcceptanceAttackTask;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "MassBattle Batch FX Test")

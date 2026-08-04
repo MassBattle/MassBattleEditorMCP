@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Winyunq. All rights reserved.
 #include "MassBattleEditorMCPCommandlet.h"
 
+#include "BatchEffects/MassBattleEffectAssetMCPApi.h"
 #include "Dom/JsonObject.h"
 #include "MassBattleProjectileMCPApi.h"
 #include "MassBattleUnitEditorMCPApi.h"
@@ -188,6 +189,34 @@ FString CommandletDispatchInvocation(const TSharedPtr<FJsonObject>& Invocation)
 		Params->TryGetStringField(TEXT("UnitPath"), UnitPath);
 		Params->TryGetStringField(TEXT("unit_path"), UnitPath);
 		return UMassBattleUnitMCPApi::MCP_UnitGet(UnitPath, CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_EffectAssetReadSummary") || Command == TEXT("effect_asset_read_summary"))
+	{
+		FString AssetPath;
+		Params->TryGetStringField(TEXT("AssetPath"), AssetPath);
+		Params->TryGetStringField(TEXT("asset_path"), AssetPath);
+		return UMassBattleEffectAssetMCPApi::MCP_EffectAssetReadSummary(
+			AssetPath,
+			CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_EditorPlanOrganizeUnitAssets") || Command == TEXT("editor_plan_organize_unit_assets"))
+	{
+		FString UnitPath;
+		Params->TryGetStringField(TEXT("UnitPath"), UnitPath);
+		Params->TryGetStringField(TEXT("unit_path"), UnitPath);
+		return UMassBattleUnitEditorMCPApi::MCP_EditorPlanOrganizeUnitAssets(
+			UnitPath,
+			CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }));
+	}
+	if (Command == TEXT("MCP_EditorApplyOrganizeUnitAssets") || Command == TEXT("editor_apply_organize_unit_assets"))
+	{
+		FString UnitPath;
+		Params->TryGetStringField(TEXT("UnitPath"), UnitPath);
+		Params->TryGetStringField(TEXT("unit_path"), UnitPath);
+		return UMassBattleUnitEditorMCPApi::MCP_EditorApplyOrganizeUnitAssets(
+			UnitPath,
+			CommandletJsonFieldByNamesAsString(Params, { TEXT("OptionsJson"), TEXT("options") }),
+			bSaveAssets);
 	}
 	if (Command == TEXT("MCP_ProjectileGetApiStatus") || Command == TEXT("projectile_get_api_status"))
 	{

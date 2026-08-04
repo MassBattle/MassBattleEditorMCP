@@ -3,6 +3,7 @@
 #include "MassBattleUnitEditorMCPApi.h"
 
 #include "AnimToTextureDataAsset.h"
+#include "AnimPose.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -231,6 +232,50 @@ static TSharedPtr<FJsonObject> TransformJson(const FTransform& Transform)
 	return Object;
 }
 
+// Actor sizing is deliberately reported before VAT scaling so batch tools can
+// select one shared coefficient without mutating or recentering source assets.
+static TSharedPtr<FJsonObject> BodyBoxJson(const FBox& Box)
+{
+	TSharedPtr<FJsonObject> Object = MakeShared<FJsonObject>();
+	Object->SetBoolField(TEXT("valid"), Box.IsValid != 0);
+	if (Box.IsValid)
+	{
+		const FVector Size = Box.GetSize();
+		Object->SetObjectField(TEXT("min"), VectorJson(Box.Min));
+		Object->SetObjectField(TEXT("max"), VectorJson(Box.Max));
+		Object->SetObjectField(TEXT("center"), VectorJson(Box.GetCenter()));
+		Object->SetObjectField(TEXT("size"), VectorJson(Size));
+		Object->SetNumberField(TEXT("horizontal_max_span_uu"), FMath::Max(Size.X, Size.Y));
+		Object->SetNumberField(TEXT("horizontal_min_span_uu"), FMath::Min(Size.X, Size.Y));
+		Object->SetNumberField(TEXT("horizontal_area_uu2"), Size.X * Size.Y);
+	}
+	return Object;
+}
+
+static FBox TransformBox(const FBox& Box, const FTransform& Transform)
+{
+	FBox Result(EForceInit::ForceInit);
+	if (!Box.IsValid)
+	{
+		return Result;
+	}
+
+	for (int32 X = 0; X < 2; ++X)
+	{
+		for (int32 Y = 0; Y < 2; ++Y)
+		{
+			for (int32 Z = 0; Z < 2; ++Z)
+			{
+				Result += Transform.TransformPosition(FVector(
+					X == 0 ? Box.Min.X : Box.Max.X,
+					Y == 0 ? Box.Min.Y : Box.Max.Y,
+					Z == 0 ? Box.Min.Z : Box.Max.Z));
+			}
+		}
+	}
+	return Result;
+}
+
 struct FActorAssemblyContext
 {
 	AActor* Actor = nullptr;
@@ -240,6 +285,10 @@ struct FActorAssemblyContext
 	TMap<FString, TSharedPtr<FJsonObject>> OverridesByComponent;
 	TArray<TSharedPtr<FJsonValue>> ComponentDescriptions;
 	TArray<TSharedPtr<FJsonValue>> Issues;
+	FBox EvaluatedBodyBounds = FBox(EForceInit::ForceInit);
+	FBox ReferenceBodyBounds = FBox(EForceInit::ForceInit);
+	int32 BodyBoundsIncludedComponentCount = 0;
+	int32 BodyBoundsExcludedComponentCount = 0;
 
 	~FActorAssemblyContext()
 	{
@@ -598,6 +647,109 @@ static bool ResolveReferenceComponentToRoot(
 	return ResolveReferenceComponentToRootRecursive(Component, RootComponent, Visiting, OutComponentToRoot, OutError);
 }
 
+static bool IsIncludedAssemblyMesh(const UMeshComponent* MeshComponent, const FActorAssemblyContext& Context)
+{
+	if (const USkeletalMeshComponent* SkeletalComponent = Cast<USkeletalMeshComponent>(MeshComponent))
+	{
+		return Context.SkeletalComponents.Contains(const_cast<USkeletalMeshComponent*>(SkeletalComponent));
+	}
+	if (const UStaticMeshComponent* StaticComponent = Cast<UStaticMeshComponent>(MeshComponent))
+	{
+		return Context.StaticComponents.Contains(const_cast<UStaticMeshComponent*>(StaticComponent));
+	}
+	return false;
+}
+
+static bool ShouldIncludeInBodyBounds(
+	const UMeshComponent* MeshComponent,
+	const FActorAssemblyContext& Context,
+	FString& OutReason)
+{
+	if (!IsIncludedAssemblyMesh(MeshComponent, Context))
+	{
+		OutReason = TEXT("not_in_actor_assembly");
+		return false;
+	}
+
+	if (const TSharedPtr<FJsonObject>* Override = Context.OverridesByComponent.Find(MeshComponent->GetName().ToLower()))
+	{
+		bool bIncludeInBodyBounds = true;
+		if ((*Override)->TryGetBoolField(TEXT("include_in_body_bounds"), bIncludeInBodyBounds)
+			&& !bIncludeInBodyBounds)
+		{
+			OutReason = TEXT("component_override");
+			return false;
+		}
+	}
+
+	OutReason = TEXT("included_body_mesh");
+	return true;
+}
+
+static FBox EvaluatedComponentBoundsInRootSpace(
+	UMeshComponent* MeshComponent,
+	const USkeletalMeshComponent* RootComponent)
+{
+	if (!MeshComponent || !RootComponent)
+	{
+		return FBox(EForceInit::ForceInit);
+	}
+
+	MeshComponent->UpdateBounds();
+	const FBox WorldBounds = MeshComponent->Bounds.GetBox();
+	const FTransform WorldToRoot = RootComponent->GetComponentTransform().Inverse();
+	return TransformBox(WorldBounds, WorldToRoot);
+}
+
+static bool ReferenceComponentBoundsInRootSpace(
+	UMeshComponent* MeshComponent,
+	const FActorAssemblyContext& Context,
+	FBox& OutBounds,
+	FString& OutError)
+{
+	OutBounds = FBox(EForceInit::ForceInit);
+	if (!MeshComponent || !Context.RootSkeletalComponent)
+	{
+		OutError = TEXT("Mesh component or root SkeletalMeshComponent is missing.");
+		return false;
+	}
+
+	FBox LocalBounds(EForceInit::ForceInit);
+	if (const USkeletalMeshComponent* SkeletalComponent = Cast<USkeletalMeshComponent>(MeshComponent))
+	{
+		const USkeletalMesh* SkeletalMesh = SkeletalComponent->GetSkeletalMeshAsset();
+		if (!SkeletalMesh)
+		{
+			OutError = TEXT("SkeletalMesh is missing.");
+			return false;
+		}
+		LocalBounds = SkeletalMesh->GetImportedBounds().GetBox();
+	}
+	else if (const UStaticMeshComponent* StaticComponent = Cast<UStaticMeshComponent>(MeshComponent))
+	{
+		const UStaticMesh* StaticMesh = StaticComponent->GetStaticMesh();
+		if (!StaticMesh)
+		{
+			OutError = TEXT("StaticMesh is missing.");
+			return false;
+		}
+		LocalBounds = StaticMesh->GetBoundingBox();
+	}
+	else
+	{
+		OutError = TEXT("Unsupported mesh component class.");
+		return false;
+	}
+
+	FTransform ComponentToRoot;
+	if (!ResolveReferenceComponentToRoot(MeshComponent, Context.RootSkeletalComponent, ComponentToRoot, OutError))
+	{
+		return false;
+	}
+	OutBounds = TransformBox(LocalBounds, ComponentToRoot);
+	return OutBounds.IsValid != 0;
+}
+
 static void DescribeComponents(FActorAssemblyContext& Context)
 {
 	TInlineComponentArray<UMeshComponent*> MeshComponents(Context.Actor);
@@ -612,6 +764,22 @@ static void DescribeComponents(FActorAssemblyContext& Context)
 		Description->SetStringField(TEXT("component"), MeshComponent->GetName());
 		Description->SetStringField(TEXT("component_class"), MeshComponent->GetClass()->GetPathName());
 		Description->SetBoolField(TEXT("visible"), MeshComponent->IsVisible());
+
+		FString BodyBoundsReason;
+		const bool bIncludeInBodyBounds = ShouldIncludeInBodyBounds(MeshComponent, Context, BodyBoundsReason);
+		Description->SetBoolField(TEXT("include_in_body_bounds"), bIncludeInBodyBounds);
+		Description->SetStringField(TEXT("body_bounds_reason"), BodyBoundsReason);
+		if (IsIncludedAssemblyMesh(MeshComponent, Context))
+		{
+			if (bIncludeInBodyBounds)
+			{
+				++Context.BodyBoundsIncludedComponentCount;
+			}
+			else
+			{
+				++Context.BodyBoundsExcludedComponentCount;
+			}
+		}
 
 		if (const USceneComponent* SceneComponent = Cast<USceneComponent>(MeshComponent))
 		{
@@ -635,6 +803,31 @@ static void DescribeComponents(FActorAssemblyContext& Context)
 				{
 					Description->SetStringField(TEXT("reference_pose_transform_error"), ReferencePoseError);
 				}
+			}
+		}
+
+		if (Context.RootSkeletalComponent && IsIncludedAssemblyMesh(MeshComponent, Context))
+		{
+			const FBox EvaluatedBounds = EvaluatedComponentBoundsInRootSpace(MeshComponent, Context.RootSkeletalComponent);
+			Description->SetObjectField(TEXT("evaluated_actor_bounds_root_model_space"), BodyBoxJson(EvaluatedBounds));
+			if (bIncludeInBodyBounds && EvaluatedBounds.IsValid)
+			{
+				Context.EvaluatedBodyBounds += EvaluatedBounds;
+			}
+
+			FBox ReferenceBounds(EForceInit::ForceInit);
+			FString ReferenceBoundsError;
+			if (ReferenceComponentBoundsInRootSpace(MeshComponent, Context, ReferenceBounds, ReferenceBoundsError))
+			{
+				Description->SetObjectField(TEXT("reference_mesh_bounds_root_model_space"), BodyBoxJson(ReferenceBounds));
+				if (bIncludeInBodyBounds)
+				{
+					Context.ReferenceBodyBounds += ReferenceBounds;
+				}
+			}
+			else
+			{
+				Description->SetStringField(TEXT("reference_mesh_bounds_error"), ReferenceBoundsError);
 			}
 		}
 
@@ -1009,10 +1202,10 @@ static TSharedPtr<FJsonObject> ResolveActorVatSampleRate(
 		return Result;
 	}
 
-	constexpr double DefaultVatSampleRate = 24.0;
+	constexpr double DefaultVatSampleRate = 30.0;
 	ResolvedSpec->SetNumberField(TEXT("vat_sample_rate"), DefaultVatSampleRate);
 	AddIssue(Issues, TEXT("warning"), TEXT("defaulted_vat_sample_rate"),
-		TEXT("vat_sample_rate was omitted; Actor VAT authoring selected the MassBattle MCP style default of 24 Hz."),
+		TEXT("vat_sample_rate was omitted; Actor VAT authoring selected the generic 30 Hz default. Projects can override it explicitly."),
 		TEXT("vat_sample_rate"));
 	Result->SetStringField(TEXT("source"), TEXT("massbattle_mcp_style_default"));
 	Result->SetNumberField(TEXT("sample_rate"), DefaultVatSampleRate);
@@ -1109,6 +1302,14 @@ static TSharedPtr<FJsonObject> BuildInspectionResult(const TSharedPtr<FJsonObjec
 	Result->SetNumberField(TEXT("included_static_components"), Context.StaticComponents.Num());
 	Result->SetBoolField(TEXT("can_assemble"), bCanAssemble);
 	Result->SetArrayField(TEXT("components"), Context.ComponentDescriptions);
+	TSharedPtr<FJsonObject> BodyBounds = MakeShared<FJsonObject>();
+	BodyBounds->SetStringField(TEXT("policy"), TEXT("traverse_visible_actor_assembly_meshes_excluding_component_overrides"));
+	BodyBounds->SetStringField(TEXT("coordinate_space"), TEXT("root_skeleton_model_space_no_recentering"));
+	BodyBounds->SetNumberField(TEXT("included_component_count"), Context.BodyBoundsIncludedComponentCount);
+	BodyBounds->SetNumberField(TEXT("excluded_component_count"), Context.BodyBoundsExcludedComponentCount);
+	BodyBounds->SetObjectField(TEXT("evaluated_actor_pose"), BodyBoxJson(Context.EvaluatedBodyBounds));
+	BodyBounds->SetObjectField(TEXT("reference_mesh_pose"), BodyBoxJson(Context.ReferenceBodyBounds));
+	Result->SetObjectField(TEXT("body_bounds"), BodyBounds);
 	Result->SetArrayField(TEXT("issues"), Context.Issues);
 	return Result;
 }
@@ -1237,6 +1438,399 @@ static TSharedPtr<FJsonObject> BuildSkinWeightAudit(USkeletalMesh* SkeletalMesh)
 	Result->SetNumberField(TEXT("invalid_bone_map_influence_count"), InvalidBoneMapInfluenceCount);
 	Result->SetBoolField(TEXT("has_deforming_skin_weights"), NonRootWeightedVertexCount > 0 && UsedMeshBones.Num() > 1);
 	Result->SetArrayField(TEXT("used_mesh_bones"), UsedBones);
+	return Result;
+}
+
+static TSharedPtr<FJsonObject> BoxJson(const FBox& Box)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetObjectField(TEXT("min"), VectorJson(Box.Min));
+	Result->SetObjectField(TEXT("max"), VectorJson(Box.Max));
+	Result->SetObjectField(TEXT("center"), VectorJson(Box.GetCenter()));
+	Result->SetObjectField(TEXT("extent"), VectorJson(Box.GetExtent()));
+	return Result;
+}
+
+static bool ComputeMeshDescriptionBounds(const FMeshDescription& MeshDescription, FBox& OutBounds)
+{
+	OutBounds = FBox(ForceInit);
+	if (MeshDescription.Vertices().Num() == 0)
+	{
+		return false;
+	}
+
+	FStaticMeshConstAttributes Attributes(MeshDescription);
+	TVertexAttributesConstRef<FVector3f> Positions = Attributes.GetVertexPositions();
+	for (const FVertexID VertexId : MeshDescription.Vertices().GetElementIDs())
+	{
+		const FVector3f Position = Positions[VertexId];
+		OutBounds += FVector(
+			static_cast<double>(Position.X),
+			static_cast<double>(Position.Y),
+			static_cast<double>(Position.Z));
+	}
+	return OutBounds.IsValid != 0;
+}
+
+static TSharedPtr<FJsonObject> BuildCoordinateOriginAudit(USkeletalMesh* SkeletalMesh, UStaticMesh* StaticMesh)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("valid"), false);
+	Result->SetStringField(TEXT("coordinate_policy"), TEXT("root_model_space_identity_no_recentering"));
+	if (!SkeletalMesh || !StaticMesh)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("SkeletalMesh or StaticMesh is missing."));
+		return Result;
+	}
+
+	FMeshDescription SkeletalDescription;
+	const FMeshDescription* StaticDescription = StaticMesh->GetMeshDescription(0);
+	FBox SkeletalBounds(ForceInit);
+	FBox StaticBounds(ForceInit);
+	const bool bSkeletalBoundsValid = SkeletalMesh->CloneMeshDescription(0, SkeletalDescription)
+		&& ComputeMeshDescriptionBounds(SkeletalDescription, SkeletalBounds);
+	const bool bStaticBoundsValid = StaticDescription
+		&& ComputeMeshDescriptionBounds(*StaticDescription, StaticBounds);
+	if (!bSkeletalBoundsValid || !bStaticBoundsValid)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("LOD0 MeshDescription bounds are not readable on both meshes."));
+		return Result;
+	}
+
+	const FVector MinDelta = StaticBounds.Min - SkeletalBounds.Min;
+	const FVector MaxDelta = StaticBounds.Max - SkeletalBounds.Max;
+	const double MaximumCoordinateDelta = FMath::Max(
+		FMath::Max3(FMath::Abs(MinDelta.X), FMath::Abs(MinDelta.Y), FMath::Abs(MinDelta.Z)),
+		FMath::Max3(FMath::Abs(MaxDelta.X), FMath::Abs(MaxDelta.Y), FMath::Abs(MaxDelta.Z)));
+	constexpr double CoordinateTolerance = 0.01;
+
+	Result->SetBoolField(TEXT("valid"), true);
+	Result->SetStringField(TEXT("skeletal_mesh"), SkeletalMesh->GetPathName());
+	Result->SetStringField(TEXT("static_mesh"), StaticMesh->GetPathName());
+	Result->SetObjectField(TEXT("skeletal_lod0_bounds"), BoxJson(SkeletalBounds));
+	Result->SetObjectField(TEXT("static_lod0_bounds"), BoxJson(StaticBounds));
+	Result->SetObjectField(TEXT("min_delta"), VectorJson(MinDelta));
+	Result->SetObjectField(TEXT("max_delta"), VectorJson(MaxDelta));
+	Result->SetNumberField(TEXT("maximum_coordinate_delta"), MaximumCoordinateDelta);
+	Result->SetNumberField(TEXT("tolerance"), CoordinateTolerance);
+	Result->SetBoolField(TEXT("origin_preserved"), MaximumCoordinateDelta <= CoordinateTolerance);
+
+	const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
+	if (ReferenceSkeleton.GetRawBoneNum() > 0 && !ReferenceSkeleton.GetRawRefBonePose().IsEmpty())
+	{
+		Result->SetStringField(TEXT("root_bone"), ReferenceSkeleton.GetBoneName(0).ToString());
+		Result->SetObjectField(TEXT("root_reference_local_transform"), TransformJson(ReferenceSkeleton.GetRawRefBonePose()[0]));
+	}
+	return Result;
+}
+
+static bool ExpectsContinuousGroundContact(const FString& AnimationName)
+{
+	const FString LowerName = AnimationName.ToLower();
+	if (LowerName.Contains(TEXT("prone"))
+		|| LowerName.Contains(TEXT("jump"))
+		|| LowerName.Contains(TEXT("death"))
+		|| LowerName.Contains(TEXT("roll")))
+	{
+		return false;
+	}
+	return LowerName.Contains(TEXT("idle"))
+		|| LowerName.Contains(TEXT("shoot"))
+		|| LowerName.Contains(TEXT("reload"));
+}
+
+static FString RootLockModeName(ERootMotionRootLock::Type Mode)
+{
+	switch (Mode)
+	{
+	case ERootMotionRootLock::RefPose:
+		return TEXT("RefPose");
+	case ERootMotionRootLock::AnimFirstFrame:
+		return TEXT("AnimFirstFrame");
+	case ERootMotionRootLock::Zero:
+		return TEXT("Zero");
+	default:
+		return TEXT("Unknown");
+	}
+}
+
+static TSharedPtr<FJsonObject> BuildAnimationGroundingAudit(
+	UAnimToTextureDataAsset* DataAsset,
+	USkeletalMesh* SkeletalMesh,
+	double GroundTolerance)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("valid"), false);
+	Result->SetStringField(TEXT("bake_root_policy"), TEXT("SourceAssetSettings"));
+	Result->SetStringField(TEXT("legacy_comparison_root_lock_mode"), TEXT("RefPose"));
+	Result->SetNumberField(TEXT("ground_tolerance_uu"), GroundTolerance);
+	if (!DataAsset || !SkeletalMesh)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("AnimToTextureDataAsset or SkeletalMesh is missing."));
+		return Result;
+	}
+
+	const FReferenceSkeleton& ReferenceSkeleton = SkeletalMesh->GetRefSkeleton();
+	if (ReferenceSkeleton.GetRawBoneNum() == 0)
+	{
+		Result->SetStringField(TEXT("error"), TEXT("The SkeletalMesh has no reference bones."));
+		return Result;
+	}
+	const FName RootBone = ReferenceSkeleton.GetBoneName(0);
+	TArray<FName> FootBones;
+	for (int32 BoneIndex = 0; BoneIndex < ReferenceSkeleton.GetRawBoneNum(); ++BoneIndex)
+	{
+		const FName BoneName = ReferenceSkeleton.GetBoneName(BoneIndex);
+		const FString LowerBoneName = BoneName.ToString().ToLower();
+		if (LowerBoneName.Contains(TEXT("foot")) && !LowerBoneName.Contains(TEXT("ik")))
+		{
+			FootBones.AddUnique(BoneName);
+		}
+	}
+	FootBones.Sort(FNameLexicalLess());
+
+	TArray<TSharedPtr<FJsonValue>> FootBoneValues;
+	for (const FName FootBone : FootBones)
+	{
+		FootBoneValues.Add(MakeShared<FJsonValueString>(FootBone.ToString()));
+	}
+	Result->SetStringField(TEXT("root_bone"), RootBone.ToString());
+	Result->SetArrayField(TEXT("foot_bones"), FootBoneValues);
+	if (FootBones.IsEmpty())
+	{
+		Result->SetStringField(TEXT("error"), TEXT("No non-IK foot bones were found in the reference skeleton."));
+		return Result;
+	}
+
+	FAnimPoseEvaluationOptions EvaluationOptions;
+	EvaluationOptions.EvaluationType = EAnimDataEvalType::Raw;
+	EvaluationOptions.bShouldRetarget = true;
+	EvaluationOptions.bExtractRootMotion = false;
+	// AnimPose scripting maps this to FAnimExtractContext::bIgnoreRootLock.
+	// False respects the animation asset's authored root-lock settings, matching
+	// the VAT bake. True is used below for an unlocked/raw comparison.
+	EvaluationOptions.bIncorporateRootMotionIntoPose = false;
+	EvaluationOptions.OptionalSkeletalMesh = SkeletalMesh;
+	EvaluationOptions.bEvaluateCurves = false;
+
+	int32 EvaluatedAnimationCount = 0;
+	int32 GroundingIssueCount = 0;
+	int32 SourceGroundingIssueCount = 0;
+	int32 SourceHorizontalDriftIssueCount = 0;
+	int32 LegacyRefPoseRootLockIssueCount = 0;
+	int32 LegacyRefPoseGroundingIssueCount = 0;
+	TArray<TSharedPtr<FJsonValue>> Animations;
+	for (int32 AnimationIndex = 0; AnimationIndex < DataAsset->AnimSequences.Num(); ++AnimationIndex)
+	{
+		const FAnimToTextureAnimSequenceInfo& SequenceInfo = DataAsset->AnimSequences[AnimationIndex];
+		UAnimSequence* AnimationSequence = SequenceInfo.AnimSequence;
+		if (!SequenceInfo.bEnabled || !AnimationSequence)
+		{
+			continue;
+		}
+
+		const bool bOriginalForceRootLock = AnimationSequence->bForceRootLock;
+		const TEnumAsByte<ERootMotionRootLock::Type> OriginalRootMotionRootLock = AnimationSequence->RootMotionRootLock;
+
+		const int32 FrameCount = FMath::Max(1, AnimationSequence->GetNumberOfSampledKeys());
+		int32 ValidPoseCount = 0;
+		int32 AirborneFrameCount = 0;
+		int32 SourceAirborneFrameCount = 0;
+		int32 LegacyRefPoseAirborneFrameCount = 0;
+		double MinimumContactFootDelta = TNumericLimits<double>::Max();
+		double MaximumContactFootDelta = -TNumericLimits<double>::Max();
+		double SourceMinimumContactFootDelta = TNumericLimits<double>::Max();
+		double SourceMaximumContactFootDelta = -TNumericLimits<double>::Max();
+		double LegacyRefPoseMinimumContactFootDelta = TNumericLimits<double>::Max();
+		double LegacyRefPoseMaximumContactFootDelta = -TNumericLimits<double>::Max();
+		double MaximumRootTranslationDelta = 0.0;
+		double SourceMaximumRootTranslationDelta = 0.0;
+		double LegacyRefPoseMaximumRootTranslationDelta = 0.0;
+		double SourceMaximumHorizontalDriftFromFirst = 0.0;
+		double SourceMaximumYawDriftFromFirst = 0.0;
+		FVector SourceFirstRootPosition = FVector::ZeroVector;
+		double SourceFirstRootYaw = 0.0;
+		bool bHasSourceFirstRoot = false;
+		int32 WorstAirborneFrame = INDEX_NONE;
+		int32 LegacyRefPoseWorstAirborneFrame = INDEX_NONE;
+		for (int32 FrameIndex = 0; FrameIndex < FrameCount; ++FrameIndex)
+		{
+			FAnimPose Pose;
+			UAnimPoseExtensions::GetAnimPoseAtFrame(AnimationSequence, FrameIndex, EvaluationOptions, Pose);
+			if (!UAnimPoseExtensions::IsValid(Pose))
+			{
+				continue;
+			}
+			++ValidPoseCount;
+
+			const FVector RootPosition = UAnimPoseExtensions::GetBonePose(Pose, RootBone, EAnimPoseSpaces::World).GetTranslation();
+			const FVector RefRootPosition = UAnimPoseExtensions::GetRefBonePose(Pose, RootBone, EAnimPoseSpaces::World).GetTranslation();
+			MaximumRootTranslationDelta = FMath::Max(MaximumRootTranslationDelta, FVector::Distance(RootPosition, RefRootPosition));
+
+			double ContactFootDelta = TNumericLimits<double>::Max();
+			for (const FName FootBone : FootBones)
+			{
+				const double FootZ = UAnimPoseExtensions::GetBonePose(Pose, FootBone, EAnimPoseSpaces::World).GetTranslation().Z;
+				const double RefFootZ = UAnimPoseExtensions::GetRefBonePose(Pose, FootBone, EAnimPoseSpaces::World).GetTranslation().Z;
+				ContactFootDelta = FMath::Min(ContactFootDelta, FootZ - RefFootZ);
+			}
+			MinimumContactFootDelta = FMath::Min(MinimumContactFootDelta, ContactFootDelta);
+			if (ContactFootDelta > MaximumContactFootDelta)
+			{
+				MaximumContactFootDelta = ContactFootDelta;
+				WorstAirborneFrame = FrameIndex;
+			}
+			if (ContactFootDelta > GroundTolerance)
+			{
+				++AirborneFrameCount;
+			}
+
+			// Evaluate the same source frame while explicitly ignoring any authored
+			// root lock. This exposes raw local root drift for diagnostics without
+			// modifying or saving the animation asset.
+			EvaluationOptions.bIncorporateRootMotionIntoPose = true;
+			FAnimPose SourcePose;
+			UAnimPoseExtensions::GetAnimPoseAtFrame(AnimationSequence, FrameIndex, EvaluationOptions, SourcePose);
+			EvaluationOptions.bIncorporateRootMotionIntoPose = false;
+			if (UAnimPoseExtensions::IsValid(SourcePose))
+			{
+				const FTransform SourceRootTransform = UAnimPoseExtensions::GetBonePose(SourcePose, RootBone, EAnimPoseSpaces::World);
+				const FVector SourceRootPosition = SourceRootTransform.GetTranslation();
+				const FVector SourceRefRootPosition = UAnimPoseExtensions::GetRefBonePose(SourcePose, RootBone, EAnimPoseSpaces::World).GetTranslation();
+				SourceMaximumRootTranslationDelta = FMath::Max(SourceMaximumRootTranslationDelta, FVector::Distance(SourceRootPosition, SourceRefRootPosition));
+				if (!bHasSourceFirstRoot)
+				{
+					SourceFirstRootPosition = SourceRootPosition;
+					SourceFirstRootYaw = SourceRootTransform.Rotator().Yaw;
+					bHasSourceFirstRoot = true;
+				}
+				else
+				{
+					const FVector RootDeltaFromFirst = SourceRootPosition - SourceFirstRootPosition;
+					SourceMaximumHorizontalDriftFromFirst = FMath::Max(
+						SourceMaximumHorizontalDriftFromFirst,
+						FVector2D(RootDeltaFromFirst.X, RootDeltaFromFirst.Y).Size());
+					SourceMaximumYawDriftFromFirst = FMath::Max(
+						SourceMaximumYawDriftFromFirst,
+						FMath::Abs(FMath::FindDeltaAngleDegrees(SourceFirstRootYaw, SourceRootTransform.Rotator().Yaw)));
+				}
+				double SourceContactFootDelta = TNumericLimits<double>::Max();
+				for (const FName FootBone : FootBones)
+				{
+					const double FootZ = UAnimPoseExtensions::GetBonePose(SourcePose, FootBone, EAnimPoseSpaces::World).GetTranslation().Z;
+					const double RefFootZ = UAnimPoseExtensions::GetRefBonePose(SourcePose, FootBone, EAnimPoseSpaces::World).GetTranslation().Z;
+					SourceContactFootDelta = FMath::Min(SourceContactFootDelta, FootZ - RefFootZ);
+				}
+				SourceMinimumContactFootDelta = FMath::Min(SourceMinimumContactFootDelta, SourceContactFootDelta);
+				SourceMaximumContactFootDelta = FMath::Max(SourceMaximumContactFootDelta, SourceContactFootDelta);
+				if (SourceContactFootDelta > GroundTolerance)
+				{
+					++SourceAirborneFrameCount;
+				}
+			}
+
+			// Retain a diagnostic comparison with the legacy MassBattleFrame bake
+			// policy. The settings are restored immediately and are never saved.
+			AnimationSequence->bForceRootLock = true;
+			AnimationSequence->RootMotionRootLock = ERootMotionRootLock::RefPose;
+			FAnimPose LegacyRefPose;
+			UAnimPoseExtensions::GetAnimPoseAtFrame(AnimationSequence, FrameIndex, EvaluationOptions, LegacyRefPose);
+			AnimationSequence->bForceRootLock = bOriginalForceRootLock;
+			AnimationSequence->RootMotionRootLock = OriginalRootMotionRootLock;
+			if (UAnimPoseExtensions::IsValid(LegacyRefPose))
+			{
+				const FVector LegacyRootPosition = UAnimPoseExtensions::GetBonePose(LegacyRefPose, RootBone, EAnimPoseSpaces::World).GetTranslation();
+				const FVector LegacyRefRootPosition = UAnimPoseExtensions::GetRefBonePose(LegacyRefPose, RootBone, EAnimPoseSpaces::World).GetTranslation();
+				LegacyRefPoseMaximumRootTranslationDelta = FMath::Max(
+					LegacyRefPoseMaximumRootTranslationDelta,
+					FVector::Distance(LegacyRootPosition, LegacyRefRootPosition));
+
+				double LegacyContactFootDelta = TNumericLimits<double>::Max();
+				for (const FName FootBone : FootBones)
+				{
+					const double FootZ = UAnimPoseExtensions::GetBonePose(LegacyRefPose, FootBone, EAnimPoseSpaces::World).GetTranslation().Z;
+					const double RefFootZ = UAnimPoseExtensions::GetRefBonePose(LegacyRefPose, FootBone, EAnimPoseSpaces::World).GetTranslation().Z;
+					LegacyContactFootDelta = FMath::Min(LegacyContactFootDelta, FootZ - RefFootZ);
+				}
+				LegacyRefPoseMinimumContactFootDelta = FMath::Min(LegacyRefPoseMinimumContactFootDelta, LegacyContactFootDelta);
+				if (LegacyContactFootDelta > LegacyRefPoseMaximumContactFootDelta)
+				{
+					LegacyRefPoseMaximumContactFootDelta = LegacyContactFootDelta;
+					LegacyRefPoseWorstAirborneFrame = FrameIndex;
+				}
+				if (LegacyContactFootDelta > GroundTolerance)
+				{
+					++LegacyRefPoseAirborneFrameCount;
+				}
+			}
+		}
+
+		AnimationSequence->bForceRootLock = bOriginalForceRootLock;
+		AnimationSequence->RootMotionRootLock = OriginalRootMotionRootLock;
+
+		const bool bLegacyRefPoseRootLockValid = LegacyRefPoseMaximumRootTranslationDelta <= 0.1;
+		const bool bExpectedGroundContact = ExpectsContinuousGroundContact(AnimationSequence->GetName());
+		const bool bLikelyGroundingIssue = bExpectedGroundContact
+			&& AirborneFrameCount > 0
+			&& MaximumContactFootDelta > GroundTolerance;
+		const bool bSourceLikelyGroundingIssue = bExpectedGroundContact
+			&& SourceAirborneFrameCount > 0
+			&& SourceMaximumContactFootDelta > GroundTolerance;
+		const bool bLegacyRefPoseLikelyGroundingIssue = bExpectedGroundContact
+			&& LegacyRefPoseAirborneFrameCount > 0
+			&& LegacyRefPoseMaximumContactFootDelta > GroundTolerance;
+		const bool bSourceHorizontalDriftIssue = SourceMaximumHorizontalDriftFromFirst > 1.0
+			|| SourceMaximumYawDriftFromFirst > 1.0;
+		GroundingIssueCount += bLikelyGroundingIssue ? 1 : 0;
+		SourceGroundingIssueCount += bSourceLikelyGroundingIssue ? 1 : 0;
+		SourceHorizontalDriftIssueCount += bSourceHorizontalDriftIssue ? 1 : 0;
+		LegacyRefPoseRootLockIssueCount += bLegacyRefPoseRootLockValid ? 0 : 1;
+		LegacyRefPoseGroundingIssueCount += bLegacyRefPoseLikelyGroundingIssue ? 1 : 0;
+		++EvaluatedAnimationCount;
+
+		TSharedPtr<FJsonObject> Animation = MakeShared<FJsonObject>();
+		Animation->SetNumberField(TEXT("index"), AnimationIndex);
+		Animation->SetStringField(TEXT("path"), AnimationSequence->GetPathName());
+		Animation->SetNumberField(TEXT("sampled_frame_count"), FrameCount);
+		Animation->SetNumberField(TEXT("valid_pose_count"), ValidPoseCount);
+		Animation->SetBoolField(TEXT("ground_contact_expected"), bExpectedGroundContact);
+		Animation->SetBoolField(TEXT("source_asset_force_root_lock"), bOriginalForceRootLock);
+		Animation->SetStringField(TEXT("source_asset_root_lock_mode"), RootLockModeName(OriginalRootMotionRootLock));
+		Animation->SetNumberField(TEXT("maximum_root_translation_delta"), MaximumRootTranslationDelta);
+		Animation->SetNumberField(TEXT("airborne_frame_count"), AirborneFrameCount);
+		Animation->SetNumberField(TEXT("airborne_frame_ratio"), ValidPoseCount > 0
+			? static_cast<double>(AirborneFrameCount) / static_cast<double>(ValidPoseCount)
+			: 0.0);
+		Animation->SetNumberField(TEXT("minimum_contact_foot_delta"), FMath::IsFinite(MinimumContactFootDelta) ? MinimumContactFootDelta : 0.0);
+		Animation->SetNumberField(TEXT("maximum_contact_foot_delta"), FMath::IsFinite(MaximumContactFootDelta) ? MaximumContactFootDelta : 0.0);
+		Animation->SetNumberField(TEXT("worst_airborne_frame"), WorstAirborneFrame);
+		Animation->SetBoolField(TEXT("likely_grounding_issue"), bLikelyGroundingIssue);
+		Animation->SetNumberField(TEXT("source_maximum_root_translation_delta"), SourceMaximumRootTranslationDelta);
+		Animation->SetNumberField(TEXT("source_maximum_horizontal_drift_from_first"), SourceMaximumHorizontalDriftFromFirst);
+		Animation->SetNumberField(TEXT("source_maximum_yaw_drift_from_first"), SourceMaximumYawDriftFromFirst);
+		Animation->SetBoolField(TEXT("source_horizontal_drift_issue"), bSourceHorizontalDriftIssue);
+		Animation->SetNumberField(TEXT("source_airborne_frame_count"), SourceAirborneFrameCount);
+		Animation->SetNumberField(TEXT("source_minimum_contact_foot_delta"), FMath::IsFinite(SourceMinimumContactFootDelta) ? SourceMinimumContactFootDelta : 0.0);
+		Animation->SetNumberField(TEXT("source_maximum_contact_foot_delta"), FMath::IsFinite(SourceMaximumContactFootDelta) ? SourceMaximumContactFootDelta : 0.0);
+		Animation->SetBoolField(TEXT("source_likely_grounding_issue"), bSourceLikelyGroundingIssue);
+		Animation->SetBoolField(TEXT("legacy_refpose_root_lock_valid"), bLegacyRefPoseRootLockValid);
+		Animation->SetNumberField(TEXT("legacy_refpose_maximum_root_translation_delta"), LegacyRefPoseMaximumRootTranslationDelta);
+		Animation->SetNumberField(TEXT("legacy_refpose_airborne_frame_count"), LegacyRefPoseAirborneFrameCount);
+		Animation->SetNumberField(TEXT("legacy_refpose_minimum_contact_foot_delta"), FMath::IsFinite(LegacyRefPoseMinimumContactFootDelta) ? LegacyRefPoseMinimumContactFootDelta : 0.0);
+		Animation->SetNumberField(TEXT("legacy_refpose_maximum_contact_foot_delta"), FMath::IsFinite(LegacyRefPoseMaximumContactFootDelta) ? LegacyRefPoseMaximumContactFootDelta : 0.0);
+		Animation->SetNumberField(TEXT("legacy_refpose_worst_airborne_frame"), LegacyRefPoseWorstAirborneFrame);
+		Animation->SetBoolField(TEXT("legacy_refpose_likely_grounding_issue"), bLegacyRefPoseLikelyGroundingIssue);
+		Animations.Add(MakeShared<FJsonValueObject>(Animation));
+	}
+
+	Result->SetBoolField(TEXT("valid"), EvaluatedAnimationCount > 0);
+	Result->SetNumberField(TEXT("evaluated_animation_count"), EvaluatedAnimationCount);
+	Result->SetNumberField(TEXT("likely_grounding_issue_count"), GroundingIssueCount);
+	Result->SetNumberField(TEXT("source_likely_grounding_issue_count"), SourceGroundingIssueCount);
+	Result->SetNumberField(TEXT("source_horizontal_drift_issue_count"), SourceHorizontalDriftIssueCount);
+	Result->SetNumberField(TEXT("legacy_refpose_root_lock_issue_count"), LegacyRefPoseRootLockIssueCount);
+	Result->SetNumberField(TEXT("legacy_refpose_likely_grounding_issue_count"), LegacyRefPoseGroundingIssueCount);
+	Result->SetArrayField(TEXT("animations"), Animations);
 	return Result;
 }
 
@@ -1418,7 +2012,9 @@ static TSharedPtr<FJsonObject> BuildMaterialParameterAssociationAudit(
 		FName(TEXT("BoneMode")), FName(TEXT("UseVAT")), FName(TEXT("LegacyAnimData")),
 		FName(TEXT("AutoPlay")), FName(TEXT("UseUV0")), FName(TEXT("UseUV1")),
 		FName(TEXT("UseUV2")), FName(TEXT("UseUV3")), FName(TEXT("UseTwoInfluences")),
-		FName(TEXT("UseFourInfluences")), FName(TEXT("UseBlend2")), FName(TEXT("UseBlend3")) })
+		FName(TEXT("UseFourInfluences")), FName(TEXT("UseBlend2")), FName(TEXT("UseBlend3")),
+		FName(TEXT("UseColorTex")), FName(TEXT("UseNormalTex")), FName(TEXT("UseRoughnessTex")),
+		FName(TEXT("UseMetallicTex")), FName(TEXT("UseSpecularTex")), FName(TEXT("UseARMTex")) })
 	{
 		Switches->SetBoolField(Name.ToString(), UMaterialEditingLibrary::GetMaterialInstanceStaticSwitchParameterValue(
 			MaterialInstance, Name, Association));
@@ -1428,7 +2024,9 @@ static TSharedPtr<FJsonObject> BuildMaterialParameterAssociationAudit(
 	for (const FName Name : {
 		FName(TEXT("PositionTexture")), FName(TEXT("NormalTexture")),
 		FName(TEXT("BonePositionTexture")), FName(TEXT("BoneRotationTexture")),
-		FName(TEXT("BoneWeightsTexture")), FName(TEXT("AnimDataTex")) })
+		FName(TEXT("BoneWeightsTexture")), FName(TEXT("AnimDataTex")),
+		FName(TEXT("BaseColorTex")), FName(TEXT("NormalTex")), FName(TEXT("RoughnessTex")),
+		FName(TEXT("MetallicTex")), FName(TEXT("SpecularTex")), FName(TEXT("ARMTex")) })
 	{
 		UTexture* Texture = UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(MaterialInstance, Name, Association);
 		Textures->SetStringField(Name.ToString(), Texture ? Texture->GetPathName() : FString());
@@ -1473,12 +2071,45 @@ static bool MaterialHasScalarValue(UMaterialInstanceConstant* Instance, const FN
 	return FMath::IsNearlyEqual(GlobalValue, Expected) || FMath::IsNearlyEqual(LayerValue, Expected);
 }
 
-static TSharedPtr<FJsonObject> BuildVatMaterialAudit(UStaticMesh* StaticMesh, UAnimToTextureDataAsset* DataAsset)
+static TArray<FString> GetSourceMaterialTexturePaths(UMaterialInterface* Material)
+{
+	TSet<FString> Paths;
+	if (!Material)
+	{
+		return {};
+	}
+
+	for (UTexture* Texture : UMaterialEditingLibrary::GetMaterialUsedTextures(Material))
+	{
+		if (Texture)
+		{
+			Paths.Add(Texture->GetPathName());
+		}
+	}
+	for (UObject* ReferencedObject : Material->GetReferencedTextures())
+	{
+		if (UTexture* Texture = Cast<UTexture>(ReferencedObject))
+		{
+			Paths.Add(Texture->GetPathName());
+		}
+	}
+
+	TArray<FString> SortedPaths = Paths.Array();
+	SortedPaths.Sort();
+	return SortedPaths;
+}
+
+static TSharedPtr<FJsonObject> BuildVatMaterialAudit(
+	UStaticMesh* StaticMesh,
+	USkeletalMesh* SourceSkeletalMesh,
+	UAnimToTextureDataAsset* DataAsset)
 {
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	TArray<TSharedPtr<FJsonValue>> Materials;
 	int32 MaterialInstanceCount = 0;
 	int32 ValidMaterialCount = 0;
+	int32 SourceComparisonCount = 0;
+	int32 BaseColorSourceMismatchCount = 0;
 	const bool bBoneMode = DataAsset && DataAsset->Mode == EAnimToTextureMode::Bone;
 	TMap<FName, bool> ExpectedSwitches;
 	ExpectedSwitches.Add(TEXT("UseVAT"), true);
@@ -1499,6 +2130,19 @@ static TSharedPtr<FJsonObject> BuildVatMaterialAudit(UStaticMesh* StaticMesh, UA
 			Material->SetNumberField(TEXT("slot_index"), SlotIndex);
 			Material->SetStringField(TEXT("slot_name"), Slot.MaterialSlotName.ToString());
 			Material->SetStringField(TEXT("material"), AssetPath(Slot.MaterialInterface));
+			UMaterialInterface* SourceMaterial = nullptr;
+			if (SourceSkeletalMesh && SourceSkeletalMesh->GetMaterials().IsValidIndex(SlotIndex))
+			{
+				SourceMaterial = SourceSkeletalMesh->GetMaterials()[SlotIndex].MaterialInterface;
+			}
+			Material->SetStringField(TEXT("source_material"), AssetPath(SourceMaterial));
+			const TArray<FString> SourceTexturePaths = GetSourceMaterialTexturePaths(SourceMaterial);
+			TArray<TSharedPtr<FJsonValue>> SourceTextures;
+			for (const FString& SourceTexturePath : SourceTexturePaths)
+			{
+				SourceTextures.Add(MakeShared<FJsonValueString>(SourceTexturePath));
+			}
+			Material->SetArrayField(TEXT("source_material_textures"), SourceTextures);
 			UMaterialInstanceConstant* Instance = Cast<UMaterialInstanceConstant>(Slot.MaterialInterface);
 			Material->SetBoolField(TEXT("is_material_instance_constant"), Instance != nullptr);
 			if (Instance)
@@ -1509,6 +2153,23 @@ static TSharedPtr<FJsonObject> BuildVatMaterialAudit(UStaticMesh* StaticMesh, UA
 					Instance, EMaterialParameterAssociation::GlobalParameter));
 				Material->SetObjectField(TEXT("layer"), BuildMaterialParameterAssociationAudit(
 					Instance, EMaterialParameterAssociation::LayerParameter));
+				UTexture* GlobalBaseColor = UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(
+					Instance, TEXT("BaseColorTex"), EMaterialParameterAssociation::GlobalParameter);
+				UTexture* LayerBaseColor = UMaterialEditingLibrary::GetMaterialInstanceTextureParameterValue(
+					Instance, TEXT("BaseColorTex"), EMaterialParameterAssociation::LayerParameter);
+				Material->SetStringField(TEXT("generated_base_color_global"), AssetPath(GlobalBaseColor));
+				Material->SetStringField(TEXT("generated_base_color_layer"), AssetPath(LayerBaseColor));
+				const bool bSourceComparisonAvailable = SourceMaterial && !SourceTexturePaths.IsEmpty();
+				const bool bBaseColorMatchesSource = !bSourceComparisonAvailable
+					|| (GlobalBaseColor && SourceTexturePaths.Contains(GlobalBaseColor->GetPathName()))
+					|| (LayerBaseColor && SourceTexturePaths.Contains(LayerBaseColor->GetPathName()));
+				Material->SetBoolField(TEXT("source_texture_comparison_available"), bSourceComparisonAvailable);
+				Material->SetBoolField(TEXT("base_color_matches_source_material"), bBaseColorMatchesSource);
+				if (bSourceComparisonAvailable)
+				{
+					++SourceComparisonCount;
+					BaseColorSourceMismatchCount += bBaseColorMatchesSource ? 0 : 1;
+				}
 				TArray<TSharedPtr<FJsonValue>> ActualStaticSwitches;
 				TSet<FName> FoundCriticalSwitches;
 				int32 StaticSwitchMismatchCount = 0;
@@ -1586,6 +2247,8 @@ static TSharedPtr<FJsonObject> BuildVatMaterialAudit(UStaticMesh* StaticMesh, UA
 	Result->SetNumberField(TEXT("material_count"), Materials.Num());
 	Result->SetNumberField(TEXT("material_instance_count"), MaterialInstanceCount);
 	Result->SetNumberField(TEXT("valid_material_count"), ValidMaterialCount);
+	Result->SetNumberField(TEXT("source_texture_comparison_count"), SourceComparisonCount);
+	Result->SetNumberField(TEXT("base_color_source_mismatch_count"), BaseColorSourceMismatchCount);
 	Result->SetArrayField(TEXT("materials"), Materials);
 	return Result;
 }
@@ -2220,7 +2883,12 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorInspectVatAnimation(const FString
 	TSharedPtr<FJsonObject> SkinWeights = MassBattleActorUnitEditorMCP::BuildSkinWeightAudit(SkeletalMesh);
 	TSharedPtr<FJsonObject> VertexMotion = MassBattleActorUnitEditorMCP::BuildVertexMotionAudit(VatData);
 	TSharedPtr<FJsonObject> VatUv = MassBattleActorUnitEditorMCP::BuildVatUvAudit(StaticMesh, VatData->StaticLODIndex, VatData->UVChannel);
-	TSharedPtr<FJsonObject> VatMaterials = MassBattleActorUnitEditorMCP::BuildVatMaterialAudit(StaticMesh, VatData);
+	TSharedPtr<FJsonObject> VatMaterials = MassBattleActorUnitEditorMCP::BuildVatMaterialAudit(StaticMesh, SkeletalMesh, VatData);
+	TSharedPtr<FJsonObject> CoordinateOrigin = MassBattleActorUnitEditorMCP::BuildCoordinateOriginAudit(SkeletalMesh, StaticMesh);
+	double GroundTolerance = 3.0;
+	Spec->TryGetNumberField(TEXT("ground_tolerance_uu"), GroundTolerance);
+	GroundTolerance = FMath::Clamp(GroundTolerance, 0.0, 100.0);
+	TSharedPtr<FJsonObject> AnimationGrounding = MassBattleActorUnitEditorMCP::BuildAnimationGroundingAudit(VatData, SkeletalMesh, GroundTolerance);
 
 	TSet<FString> CanonicalPaths;
 	TSharedPtr<FJsonObject> CanonicalAnimations = MassBattleActorUnitEditorMCP::MakeCanonicalSoldierAnimations();
@@ -2272,6 +2940,15 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorInspectVatAnimation(const FString
 	VatUv->TryGetBoolField(TEXT("valid"), bUvValid);
 	bool bMaterialsValid = false;
 	VatMaterials->TryGetBoolField(TEXT("valid"), bMaterialsValid);
+	bool bCoordinateOriginValid = false;
+	bool bOriginPreserved = false;
+	CoordinateOrigin->TryGetBoolField(TEXT("valid"), bCoordinateOriginValid);
+	CoordinateOrigin->TryGetBoolField(TEXT("origin_preserved"), bOriginPreserved);
+	bool bGroundingAuditValid = false;
+	AnimationGrounding->TryGetBoolField(TEXT("valid"), bGroundingAuditValid);
+	double GroundingIssueCountValue = 0.0;
+	AnimationGrounding->TryGetNumberField(TEXT("likely_grounding_issue_count"), GroundingIssueCountValue);
+	const int32 GroundingIssueCount = FMath::RoundToInt(GroundingIssueCountValue);
 
 	TArray<TSharedPtr<FJsonValue>> Issues;
 	if (!bSkinValid)
@@ -2299,6 +2976,22 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorInspectVatAnimation(const FString
 		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("invalid_vat_material_parameters"),
 			TEXT("One or more generated material instances do not have the required VAT mode, UV, influence, texture, or frame parameters."), TEXT("static_mesh"));
 	}
+	if (!bCoordinateOriginValid || !bOriginPreserved)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("coordinate_origin_not_preserved"),
+			TEXT("The assembled SkeletalMesh and generated VAT StaticMesh do not retain identical LOD0 model-space bounds; conversion may have translated or recentered the unit."), TEXT("static_mesh"));
+	}
+	if (!bGroundingAuditValid)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("error"), TEXT("animation_grounding_audit_failed"),
+			TEXT("Source animations could not be evaluated with their authored root-lock settings used by VAT baking."), TEXT("vat_data_asset"));
+	}
+	else if (GroundingIssueCount > 0)
+	{
+		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("warning"), TEXT("animation_grounding_issue"),
+			FString::Printf(TEXT("%d standing/crouching idle, shooting, or reload animation(s) contain frames where both feet rise above the configured ground tolerance."), GroundingIssueCount),
+			TEXT("vat_data_asset"));
+	}
 	if (!bCanonicalProfile)
 	{
 		MassBattleActorUnitEditorMCP::AddIssue(Issues, TEXT("warning"), TEXT("noncanonical_soldier_animation_profile"),
@@ -2323,6 +3016,8 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorInspectVatAnimation(const FString
 	Result->SetObjectField(TEXT("vertex_motion"), VertexMotion);
 	Result->SetObjectField(TEXT("vat_uv"), VatUv);
 	Result->SetObjectField(TEXT("vat_materials"), VatMaterials);
+	Result->SetObjectField(TEXT("coordinate_origin"), CoordinateOrigin);
+	Result->SetObjectField(TEXT("animation_grounding"), AnimationGrounding);
 	Result->SetArrayField(TEXT("issues"), Issues);
 	return MassBattleActorUnitEditorMCP::ToJsonString(Result);
 }

@@ -2516,7 +2516,12 @@ static bool FilterDeclaredRapidIterationChanges(
 		Options,
 		TEXT("allowed_rapid_iteration_parameter_changes"),
 		AllowedParameterNames);
-	if (AllowedParameterNames.IsEmpty() || InOutMissing.IsEmpty())
+	TSet<FString> AllowedRemovedParameterNames;
+	ReadStringSetField(
+		Options,
+		TEXT("allowed_removed_rapid_iteration_parameters"),
+		AllowedRemovedParameterNames);
+	if ((AllowedParameterNames.IsEmpty() && AllowedRemovedParameterNames.IsEmpty()) || InOutMissing.IsEmpty())
 	{
 		return InOutMissing.IsEmpty();
 	}
@@ -2537,9 +2542,16 @@ static bool FilterDeclaredRapidIterationChanges(
 	{
 		FString ParameterName;
 		FString Key;
-		const bool bAccepted = SplitRapidIterationSignature(Missing, ParameterName, Key)
-			&& AllowedParameterNames.Contains(ParameterName)
-			&& AfterKeys.Contains(Key);
+		const bool bHasSignature = SplitRapidIterationSignature(Missing, ParameterName, Key);
+		// Replacing a local stack value with a linked Niagara parameter removes
+		// the old Rapid Iteration constant entirely and materializes the value as
+		// graph wiring.  Require a separate, exact-name allow-list for this case;
+		// ordinary value changes must still retain the same value-independent key.
+		// Module/node preservation and the removed-edge policy continue to reject
+		// unrelated destructive edits.
+		const bool bAccepted = bHasSignature
+			&& ((AllowedParameterNames.Contains(ParameterName) && AfterKeys.Contains(Key))
+				|| AllowedRemovedParameterNames.Contains(ParameterName));
 		if (bAccepted)
 		{
 			OutAccepted.Add(Missing);

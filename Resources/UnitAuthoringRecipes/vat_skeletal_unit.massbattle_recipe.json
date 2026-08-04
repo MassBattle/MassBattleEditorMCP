@@ -12,14 +12,14 @@
     "animation_search_path": "Path used by FindAndFillAnimSequences. Defaults to the source mesh package path when omitted.",
     "animation_name_filter": "Optional name filter for FindAndFillAnimSequences. When omitted, MCP uses an empty filter to include all same-skeleton animations in the search path and returns a warning.",
     "animations": "Optional explicit animation category map such as {\"idle\": [AnimPath], \"appear\": [AnimPath], \"death\": [AnimPath]}; mirrors filling the MassBattleTools animation arrays before DoAll. If automatic categorization finds no named states, MCP falls back to same-skeleton AnimSequences and warns that this map should be supplied.",
-    "vat_sample_rate": "VAT sampling rate. Defaults to 24 for MCP-generated VAT units. Source animation frame counts are resampled to this rate before baking, and rates above the source key rate are rejected instead of truncating playback; runtime can still interpolate.",
+    "vat_sample_rate": "Configurable VAT sampling rate. Defaults to 30 for MCP-generated VAT units; projects can explicitly select another positive rate such as 24 Hz. Source animation frame counts are resampled to this rate before baking, and rates above the source key rate are rejected instead of truncating playback; runtime can still interpolate.",
     "vat_uv_channel": "StaticMesh UV channel used by AnimToTexture. Defaults to 1.",
     "texture_search_path": "Path used by FindAndFillOriginalTextures.",
     "parent_material": "Optional parent material for generated material instances. Defaults to the style default or /MassBattle/Core/AgentRenderer/VAT/M_VATMaster.",
     "material_overrides": "Optional array of material paths or {slot_index, slot_name, slot_name_contains, material} objects applied to the generated StaticMesh after material instance generation.",
     "source_renderer_class": "Renderer Blueprint generated class used as the template when duplicating a renderer. Defaults to the MassBattle AgentRenderer template.",
     "niagara_system": "Optional Niagara system assigned to the renderer defaults. Defaults to the MassBattle AgentRenderer template Niagara system.",
-    "unit_patch": "Union-merge patch applied to the cloned or target unit DataAsset.",
+    "unit_patch": "Union-merge patch applied to the cloned or target unit DataAsset. For crowd compactness, keep Data.PhysicsShared.ColliderMult at one of the recipe presets: 0.85 for slight (15%) or 0.70 for noticeable (30%).",
     "target_package_path": "Optional override for the generated content package path.",
     "target_unit_package_path": "Optional override for the generated unit DataAsset package path.",
     "output_root": "Optional override for generated content root."
@@ -82,8 +82,76 @@
       "description": "Union-merge generated Visualize, LODShared, AnimShared, and balance defaults into the target unit."
     }
   ],
+  "default_unit_patch_derivations": [
+    {
+      "source": "Data.Move.XY.MoveSpeed",
+      "targets": [
+        "Data.Move.XY.MoveAcceleration",
+        "Data.Move.XY.MoveDeceleration"
+      ],
+      "multiplier": 24,
+      "unless_explicit": true
+    }
+  ],
+  "collider_mult_presets": {
+    "default": "slight_15_percent",
+    "slight_15_percent": 0.85,
+    "noticeable_30_percent": 0.7
+  },
   "default_unit_patch": {
     "Data": {
+      "PhysicsShared": {
+        "ColliderMult": 0.85
+      },
+      "Debuff": {
+        "LaunchParams": {
+          "bCanLaunch": false
+        }
+      },
+      "Defence": {
+        "LaunchImmuneAlive": 1
+      },
+      "Move": {
+        "XY": {
+          "MoveSpeed": 1000,
+          "MoveAcceleration": 24000,
+          "MoveDeceleration": 24000,
+          "MinInitSpeed": 0,
+          "AcceptanceRadius": 256,
+          "MoveSpeedRangeMapByAngle": {
+            "X": 0,
+            "Y": 1,
+            "Z": 5,
+            "W": 0.001
+          },
+          "MoveSpeedRangeMapByDist": {
+            "X": 0,
+            "Y": 1,
+            "Z": 2000,
+            "W": 1
+          }
+        },
+        "Yaw": {
+          "bEnable": true,
+          "TurnSpeed": 1080,
+          "TurnAcceleration": 6480,
+          "TurnSpeedRangeMapByMoveSpeed": {
+            "X": 0,
+            "Y": 1,
+            "Z": 2000,
+            "W": 1
+          },
+          "MinInitSpeed": 0,
+          "TurnMode": "OrientToPath",
+          "ReverseSpeedRatio": 0.9,
+          "MaxSteeringAngle": 0,
+          "SteeringRate": 180,
+          "AlignHysteresis": 0.1,
+          "OrbitGuardMult": 0.5,
+          "OrbitMinSpeedMult": 0,
+          "RotationalResistanceScale": 0
+        }
+      },
       "Visualize": {
         "Transform": {
           "Scale3D": {
