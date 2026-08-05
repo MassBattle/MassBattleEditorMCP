@@ -1,7 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.0",
+	"VersionName": "1.0-UE5.8",
+	"EngineVersion": "5.8.0",
 	"FriendlyName": "MassBattleEditorMCP",
 	"Description": "MCP system support for MassBattle plugin",
 	"Category": "Editor",

@@ -2,6 +2,16 @@
 
 [中文文档](zh.md)
 
+## Engine Version Branches
+
+| Branch | Unreal Engine | Support |
+| --- | --- | --- |
+| `main` | UE 5.8 | Primary branch with the complete MCP feature set, including Niagara MCP and Batch FX MCP. |
+| `5.7` | UE 5.7 | Core MCP compatibility; Niagara MCP and Batch FX MCP are not exposed because the required Niagara editor APIs are unavailable. |
+| `5.6` | UE 5.6 | Core MCP compatibility; Niagara MCP and Batch FX MCP are not exposed because the required Niagara editor APIs are unavailable. |
+
+For paid UE 5.6/5.7 batch-processing customization, contact QQ `3440602831`.
+
 I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 
 That is also why RTS matters to me. An ambitious RTS should not start with a vision of massive war, then cut the unit count down to a handful because the technology cannot carry the design. Scale is not decoration. Scale changes the gameplay, the tactical space, the presentation layer, and the tools required to build the game.
