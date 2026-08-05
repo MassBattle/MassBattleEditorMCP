@@ -11,8 +11,8 @@ DECLARE_LOG_CATEGORY_EXTERN(LogMassBattleEffectAssetMCPApi, Log, All);
  * Low-level effect asset MCP primitives.
  *
  * These tools intentionally do not perform one-click conversion. They provide
- * asset discovery, text inspection, duplication, and MassBattle FX renderer
- * default writes so a skill can assemble a conversion workflow.
+ * asset discovery, text inspection, and duplication. Batch FX authoring is
+ * intentionally unavailable on the UE 5.7 compatibility branch.
  */
 UCLASS()
 class MASSBATTLEEDITORMCP_API UMassBattleEffectAssetMCPApi : public UBlueprintFunctionLibrary
@@ -41,10 +41,4 @@ public:
 	/** Discard only an unsaved in-memory duplicate created by MCP_EffectDuplicateAsset. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
 	static FString MCP_EffectDiscardUnsavedDuplicate(const FString& AssetPath);
-
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
-	static FString MCP_BatchFxReadRendererDefaults(const FString& TargetClassPath);
-
-	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|BatchEffects")
-	static FString MCP_BatchFxSetRendererDefaults(const FString& TargetClassPath, const FString& NiagaraSystemPath, const FString& NdcBurstFxPath, int32 SubType, int32 RenderBatchSize, float PoolingCooldown, bool bSaveAssets);
 };

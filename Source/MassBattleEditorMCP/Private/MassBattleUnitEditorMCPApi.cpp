@@ -1839,7 +1839,8 @@ static UTexture2D* FindUsedTexture2D(UMaterialInterface* Material, const TArray<
 		return nullptr;
 	}
 
-	TArray<UTexture*> UsedTextures = UMaterialEditingLibrary::GetMaterialUsedTextures(Material);
+	TArray<UTexture*> UsedTextures;
+	Material->GetUsedTextures(UsedTextures);
 	TArray<UTexture2D*> UsedTexture2Ds;
 	TArray<UTexture2D*> DirectSourceTextures;
 	for (UObject* ReferencedTexture : Material->GetReferencedTextures())

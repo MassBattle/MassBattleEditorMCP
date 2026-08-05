@@ -117,6 +117,15 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
 mcp = FastMCP("MassBattleEditorMCP", lifespan=server_lifespan)
 
 
+def _unavailable_on_legacy_engine():
+    """Keep implementation helpers importable without registering unsupported MCP tools."""
+
+    def decorator(function):
+        return function
+
+    return decorator
+
+
 @mcp.tool()
 async def massbattle_ping() -> Dict[str, Any]:
     """Check whether the Unreal MassBattleEditorMCP bridge is reachable."""
@@ -497,7 +506,7 @@ async def effect_duplicate_asset(source_asset_path: str, new_asset_name: str, pa
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def batch_fx_read_renderer_defaults(target_class_path: str) -> Dict[str, Any]:
     """Read AMassBattleFxRenderer Blueprint class defaults used by newly placed actors."""
     return await get_connection().send_command(
@@ -506,7 +515,7 @@ async def batch_fx_read_renderer_defaults(target_class_path: str) -> Dict[str, A
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def batch_fx_set_renderer_defaults(
     target_class_path: str,
     niagara_system_path: str,
@@ -531,19 +540,19 @@ async def batch_fx_set_renderer_defaults(
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_get_api_status() -> Dict[str, Any]:
     """List Niagara MCP API capabilities."""
     return await get_connection().send_command("MCP_NiagaraGetApiStatus")
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_query(query: Any) -> Dict[str, Any]:
     """Query Niagara systems by path or name text."""
     return await get_connection().send_command("MCP_NiagaraQuery", {"QueryJson": _json_arg(query)})
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_read_summary(system_path: str, options: Any = None) -> Dict[str, Any]:
     """Read a Niagara system summary."""
     return await get_connection().send_command(
@@ -552,7 +561,7 @@ async def niagara_read_summary(system_path: str, options: Any = None) -> Dict[st
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_read_module(system_path: str, selector: Any) -> Dict[str, Any]:
     """Read one Niagara module node and pins."""
     return await get_connection().send_command(
@@ -570,7 +579,7 @@ async def effect_discard_unsaved_duplicate(asset_path: str) -> Dict[str, Any]:
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_read_graph(system_path: str, selector: Any = None) -> Dict[str, Any]:
     """Read Niagara script graphs with stable node/pin ids and explicit links."""
     return await get_connection().send_command(
@@ -579,7 +588,7 @@ async def niagara_read_graph(system_path: str, selector: Any = None) -> Dict[str
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_compare_systems(
     source_system_path: str,
     target_system_path: str,
@@ -596,7 +605,7 @@ async def niagara_compare_systems(
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_read_all(system_path: str, options: Any = None) -> Dict[str, Any]:
     """Read reflected Niagara properties plus every function-call module and pin."""
     return await get_connection().send_command(
@@ -605,7 +614,7 @@ async def niagara_read_all(system_path: str, options: Any = None) -> Dict[str, A
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_export_text(system_path: str, options: Any = None) -> Dict[str, Any]:
     """Export deterministic Niagara text for close reading."""
     return await get_connection().send_command(
@@ -614,7 +623,7 @@ async def niagara_export_text(system_path: str, options: Any = None) -> Dict[str
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_merge_write(system_path: str, patch: Any, save_assets: bool = False) -> Dict[str, Any]:
     """Union-merge Niagara property writes. This does not delete."""
     return await get_connection().send_command(
@@ -623,7 +632,7 @@ async def niagara_merge_write(system_path: str, patch: Any, save_assets: bool = 
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_set_module_pin(
     system_path: str,
     selector: Any,
@@ -644,7 +653,7 @@ async def niagara_set_module_pin(
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_apply_graph_edit(
     system_path: str,
     edit: Any,
@@ -657,7 +666,7 @@ async def niagara_apply_graph_edit(
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_batch_translate(
     manifest: Any,
     apply: bool = False,
@@ -905,7 +914,7 @@ async def niagara_batch_translate(
     }
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_set_emitter_enabled(system_path: str, emitter_name: str, enabled: bool, save_assets: bool = True) -> Dict[str, Any]:
     """Explicitly enable or disable one Niagara emitter handle."""
     return await get_connection().send_command(
@@ -919,7 +928,7 @@ async def niagara_set_emitter_enabled(system_path: str, emitter_name: str, enabl
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_delete(system_path: str, delete_spec: Any, save_assets: bool = False) -> Dict[str, Any]:
     """Run explicit Niagara delete operations such as renderer or user-parameter removal."""
     return await get_connection().send_command(
@@ -928,7 +937,7 @@ async def niagara_delete(system_path: str, delete_spec: Any, save_assets: bool =
     )
 
 
-@mcp.tool()
+@_unavailable_on_legacy_engine()
 async def niagara_add_sprite_renderer(
     system_path: str,
     emitter_name: str,

@@ -12,6 +12,8 @@
 
 For paid UE 5.6/5.7 batch-processing customization, contact QQ `3440602831`.
 
+> You are viewing the UE 5.7 compatibility branch. It keeps core MCP workflows, but intentionally does not register Niagara MCP or Batch FX MCP. The Niagara and batch-authoring material retained below documents the full UE 5.8 `main` branch only.
+
 I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 
 That is also why RTS matters to me. An ambitious RTS should not start with a vision of massive war, then cut the unit count down to a handful because the technology cannot carry the design. Scale is not decoration. Scale changes the gameplay, the tactical space, the presentation layer, and the tools required to build the game.
@@ -46,9 +48,9 @@ Local documentation entry: `Document/index.html` (`Document` worktree / `Documen
 
 This repository includes Codex skills under `skills/`:
 
-- `skills/massbattle-effect-mcp`: converts arbitrary source VFX into source-faithful Niagara systems that consume the MassBattleFrame Batch FX protocol.
-- `skills/massbattle-instant-damage-fx`: authors direct, agent-resolved attacks and their one-shot launch/impact Burst FX.
-- `skills/massbattle-projectile-authoring`: authors projectile-owned travel, collision, damage, lifecycle, Attached flight FX, and Burst lifecycle FX.
+- `skills/massbattle-effect-mcp` (UE 5.8 `main` only): converts arbitrary source VFX into source-faithful Niagara systems that consume the MassBattleFrame Batch FX protocol.
+- `skills/massbattle-instant-damage-fx` (UE 5.8 `main` for Batch FX authoring): authors direct, agent-resolved attacks and their one-shot launch/impact Burst FX.
+- `skills/massbattle-projectile-authoring` (UE 5.8 `main` for Batch FX authoring): authors projectile-owned travel, collision, damage, lifecycle, Attached flight FX, and Burst lifecycle FX.
 - `skills/massbattle-unit-authoring`: creates and edits MassBattle units from selected assets, SkeletalMeshes, or Actor Blueprint assemblies with socket-bound weapons, then links validated direct-attack or projectile configurations into unit arrays.
 
 There is only one meaning of Niagara batch conversion in these skills:
@@ -89,7 +91,7 @@ Quickly check the installation and UE bridge:
 ```
 
 After installation, restart Codex or start a new session. The UE editor must also load this plugin before the bridge starts listening.
-After successful installation, you should see `massbattle-editor-mcp` and be able to call primitive tools such as `unit_get`, `unit_create`, `projectile_get`, `projectile_write`, `projectile_validate`, `editor_apply_create_vat_unit_from_selection`, `effect_asset_read_summary`, `niagara_set_module_pin`, `batch_fx_read_renderer_defaults`, and `batch_fx_set_renderer_defaults`.
+After successful installation, you should see `massbattle-editor-mcp` and be able to call primitive tools such as `unit_get`, `unit_create`, `projectile_get`, `projectile_write`, `projectile_validate`, `editor_apply_create_vat_unit_from_selection`, and `effect_asset_read_summary`.
 
 Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values include `None`, `Appearing`, `Sleeping`, `Patrolling`, `Attacking`, `Hit`, and `Dying`. Hit FX should use `Hit`; do not write the runtime flag name `BeingHit` into this field.
 
@@ -99,8 +101,8 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | --- | --- | :---: | --- |
 | Connection / diagnostics | `massbattle_ping` | Available | Confirm that the Codex MCP server can connect to the UE editor bridge. |
 | Connection / diagnostics | `unit_get_api_status` | Available | Read Unit MCP capabilities. |
-| Connection / diagnostics | `effect_asset_get_api_status` | Available | Read Effect Asset / Batch FX MCP capabilities. |
-| Connection / diagnostics | `niagara_get_api_status` | Available | Read Niagara MCP capabilities. |
+| Connection / diagnostics | `effect_asset_get_api_status` | Available | Read generic Effect Asset MCP capabilities. |
+| Connection / diagnostics | `niagara_get_api_status` | UE 5.8 only | Read Niagara MCP capabilities. |
 | Connection / diagnostics | `projectile_get_api_status` | Available | Read Projectile DataAsset CRUD, schema, and validation capabilities. |
 | Unit MCP | `unit_list` | Available | List `MassBattleAgentConfigDataAsset` unit config assets. |
 | Unit MCP | `unit_get` | Available | Read one unit config with simple/full views and default filtering. |
@@ -142,22 +144,22 @@ Note: `FFxConfig.AgentBehaviorState` uses `EAgentBehaviorState`. Writable values
 | Effect Asset MCP | `effect_asset_soft_delete` | Available | Plan a move of unreferenced assets to `_Trash`; live moves are blocked unless explicitly forced. |
 | Effect Asset MCP | `effect_duplicate_asset` | Available | Additively duplicate assets without deleting or overwriting the source. |
 | Effect Asset MCP | `effect_discard_unsaved_duplicate` | Available | Roll back only a duplicate created unsaved by this MCP session; any package already persisted to disk is rejected. |
-| Niagara MCP | `niagara_query` | Available | Query Niagara Systems by path or name. |
-| Niagara MCP | `niagara_read_summary` | Available | Read Niagara system, emitter, renderer, user parameter, and module summaries. |
-| Niagara MCP | `niagara_read_module` | Available | Read one Niagara module node and its pins. |
-| Niagara MCP | `niagara_read_graph` | Available | Read selected system/emitter script traversals with stable node GUIDs, pin IDs, directions, defaults, and explicit links. |
-| Niagara MCP | `niagara_compare_systems` | Available | Compare an exact duplicate or translated target with its source using source-neutral semantic fingerprints. |
-| Niagara MCP | `niagara_read_all` | Available | Read reflected Niagara properties and every function-call module/pin. |
-| Niagara MCP | `niagara_export_text` | Available | Export deterministic Niagara text. |
-| Niagara MCP | `niagara_merge_write` | Available | Union-write Niagara properties; does not handle deletion. |
-| Niagara MCP | `niagara_set_module_pin` | Available | Write one Niagara FunctionCall module input pin default; linked pins are rejected by default. |
-| Niagara MCP | `niagara_apply_graph_edit` | Available | Apply ordered user-DI, module insertion, stack-input, connect/disconnect, and lossless rewire operations; compile once and save only after preservation validation passes. |
-| Niagara MCP | `niagara_batch_translate` | Available | Preflight or execute an explicit source-first translation manifest; defaults to read-only preflight and never guesses visual edits. |
-| Niagara MCP | `niagara_set_emitter_enabled` | Available | Explicitly enable or disable one Niagara emitter handle. |
-| Niagara MCP | `niagara_delete` | Available | Explicitly delete renderers, user parameters, disable emitters, etc. |
-| Niagara MCP | `niagara_add_sprite_renderer` | Available | Add one configured sprite renderer to an existing emitter. |
-| Batch FX MCP | `batch_fx_read_renderer_defaults` | Available | Read `AMassBattleFxRenderer` Blueprint defaults inherited by newly placed actors. |
-| Batch FX MCP | `batch_fx_set_renderer_defaults` | Available | Set `AMassBattleFxRenderer` Blueprint defaults, including `NiagaraSystemAsset`, `NDC_BurstFx`, `SubType`, batch size, and pooling cooldown. |
+| Niagara MCP | `niagara_query` | UE 5.8 only | Query Niagara Systems by path or name. |
+| Niagara MCP | `niagara_read_summary` | UE 5.8 only | Read Niagara system, emitter, renderer, user parameter, and module summaries. |
+| Niagara MCP | `niagara_read_module` | UE 5.8 only | Read one Niagara module node and its pins. |
+| Niagara MCP | `niagara_read_graph` | UE 5.8 only | Read selected system/emitter script traversals with stable node GUIDs, pin IDs, directions, defaults, and explicit links. |
+| Niagara MCP | `niagara_compare_systems` | UE 5.8 only | Compare an exact duplicate or translated target with its source using source-neutral semantic fingerprints. |
+| Niagara MCP | `niagara_read_all` | UE 5.8 only | Read reflected Niagara properties and every function-call module/pin. |
+| Niagara MCP | `niagara_export_text` | UE 5.8 only | Export deterministic Niagara text. |
+| Niagara MCP | `niagara_merge_write` | UE 5.8 only | Union-write Niagara properties; does not handle deletion. |
+| Niagara MCP | `niagara_set_module_pin` | UE 5.8 only | Write one Niagara FunctionCall module input pin default; linked pins are rejected by default. |
+| Niagara MCP | `niagara_apply_graph_edit` | UE 5.8 only | Apply ordered user-DI, module insertion, stack-input, connect/disconnect, and lossless rewire operations; compile once and save only after preservation validation passes. |
+| Niagara MCP | `niagara_batch_translate` | UE 5.8 only | Preflight or execute an explicit source-first translation manifest; defaults to read-only preflight and never guesses visual edits. |
+| Niagara MCP | `niagara_set_emitter_enabled` | UE 5.8 only | Explicitly enable or disable one Niagara emitter handle. |
+| Niagara MCP | `niagara_delete` | UE 5.8 only | Explicitly delete renderers, user parameters, disable emitters, etc. |
+| Niagara MCP | `niagara_add_sprite_renderer` | UE 5.8 only | Add one configured sprite renderer to an existing emitter. |
+| Batch FX MCP | `batch_fx_read_renderer_defaults` | UE 5.8 only | Read `AMassBattleFxRenderer` Blueprint defaults inherited by newly placed actors. |
+| Batch FX MCP | `batch_fx_set_renderer_defaults` | UE 5.8 only | Set `AMassBattleFxRenderer` Blueprint defaults, including `NiagaraSystemAsset`, `NDC_BurstFx`, `SubType`, batch size, and pooling cooldown. |
 
 For source-faithful batch translation, duplicate the exact source Niagara, prove the duplicate with `niagara_compare_systems(mode=exact)`, add only the MassBattleFrame protocol adapter, and validate again with `mode=translation`. Exact mode defaults to structural identity plus compile-error checks because an unsaved duplicate may not have entered Niagara's compile queue yet; the graph-edit barrier and translation mode enforce runtime readiness before save. A template-based recreation is a separate optional optimized artifact and must not be reported as a faithful mapping. After translation, verify renderer Blueprint defaults, use available level-editing tools to place the renderer in a test level, and route the effect through Unit or Projectile MCP. Do not hand level setup back to the user when an editor tool can perform it.
 
@@ -194,7 +196,7 @@ MassBattleTools DoAll correspondence for VAT units:
 
 The apply call runs validation before writing assets. The plan and validate calls expose these steps for review, but a normal AI command should still provide the complete spec up front.
 
-## Lossless Niagara Graph Editing
+## Lossless Niagara Graph Editing (UE 5.8 `main` only)
 
 Use `niagara_read_graph` before any graph mutation. A selector can narrow by `scope`, `emitter`, `script_usage`, `usage_id`, or `output_node_guid`; returned nodes expose stable `node_guid`, `pin_id`, `persistent_guid`, direction, type, defaults, and links. Copy the returned node `reference` object for later edits because cloned or inherited emitters can contain the same node GUID. Stack modules also return `stack_inputs` with their exact authored names, types, visibility, and editability. Event-handler and simulation-stage stacks are resolved with their non-empty `usage_id`.
 
@@ -275,7 +277,7 @@ The default style profile is `Resources/UnitManagementStyles/default.massbattle_
 It is not a runtime feature. It is authoring context for AI and MCP tools: scan roots, unit organization rules, unit authoring defaults, and batch FX templates.
 When `unit_create` does not receive `template_unit`, it reads `authoring_defaults.default_unit_template` as the default unit template. Configure that path before using default-template creation.
 
-Use this template workflow only for a new effect or an explicitly requested optimized recreation. A source-faithful Marketplace translation must duplicate the exact source instead.
+The Batch FX template steps in this section require UE 5.8 `main`. Use this template workflow only for a new effect or an explicitly requested optimized recreation. A source-faithful Marketplace translation must duplicate the exact source instead.
 
 Recommended template flow:
 

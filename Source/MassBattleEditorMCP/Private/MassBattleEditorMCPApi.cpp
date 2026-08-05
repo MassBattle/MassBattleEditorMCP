@@ -1402,6 +1402,10 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 	Root->SetStringField(TEXT("api_name"), TEXT("MassBattleEditorMCP"));
 	Root->SetStringField(TEXT("version"), TEXT("1.0.0"));
 	Root->SetStringField(TEXT("module"), TEXT("MassBattleEditorMCP"));
+	Root->SetStringField(TEXT("engine_branch"), TEXT("5.7"));
+	Root->SetBoolField(TEXT("niagara_mcp_supported"), false);
+	Root->SetBoolField(TEXT("batch_fx_mcp_supported"), false);
+	Root->SetStringField(TEXT("batch_fx_customization_contact"), TEXT("QQ 3440602831"));
 
 	/// 工具列表
 	TArray<TSharedPtr<FJsonValue>> Tools;
@@ -1566,46 +1570,6 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("ProjectilePath, OptionsJson"),
 		TEXT("projectile.delete"));
 
-	AddTool(TEXT("MCP_NiagaraQuery"),
-		TEXT("按路径/名称检索 Niagara System 资产，作为特效参考入口"),
-		TEXT("QueryJson"),
-		TEXT("niagara.query"));
-
-	AddTool(TEXT("MCP_NiagaraReadSummary"),
-		TEXT("读取 Niagara System 的系统、Emitter、Renderer、用户参数和模块摘要"),
-		TEXT("SystemPath, OptionsJson"),
-		TEXT("niagara.read"));
-
-	AddTool(TEXT("MCP_NiagaraReadModule"),
-		TEXT("精读一个 Niagara FunctionCall 模块节点及其 Pins"),
-		TEXT("SystemPath, SelectorJson"),
-		TEXT("niagara.read"));
-
-	AddTool(TEXT("MCP_NiagaraReadAll"),
-		TEXT("读取 Niagara System 的完整反射属性和全部模块节点"),
-		TEXT("SystemPath, OptionsJson"),
-		TEXT("niagara.read"));
-
-	AddTool(TEXT("MCP_NiagaraExportText"),
-		TEXT("把 Niagara System 转成可读文本并可写入 Saved/MassBattleEditorMCP/NiagaraText"),
-		TEXT("SystemPath, OptionsJson"),
-		TEXT("niagara.text"));
-
-	AddTool(TEXT("MCP_NiagaraMergeWrite"),
-		TEXT("对 Niagara System/EmitterData/Renderer 做并集属性写入，不负责删除"),
-		TEXT("SystemPath, PatchJson, bSaveAssets"),
-		TEXT("niagara.write"));
-
-	AddTool(TEXT("MCP_NiagaraSetModulePin"),
-		TEXT("写一个 Niagara FunctionCall 模块输入 Pin 的默认值；默认拒绝已连接 Pin"),
-		TEXT("SystemPath, SelectorJson, PinName, ValueText, bSaveAssets"),
-		TEXT("niagara.write"));
-
-	AddTool(TEXT("MCP_NiagaraDelete"),
-		TEXT("显式删除 Niagara 目标：renderer、user_parameter，或禁用 emitter"),
-		TEXT("SystemPath, DeleteJson, bSaveAssets"),
-		TEXT("niagara.delete"));
-
 	AddTool(TEXT("MCP_EffectAssetQuery"),
 		TEXT("检索未知 Marketplace 特效相关资产，可按 Niagara/Cascade/Material/Blueprint 等类型过滤"),
 		TEXT("QueryJson"),
@@ -1630,11 +1594,6 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 		TEXT("复制任意特效相关资产到目标目录"),
 		TEXT("SourceAssetPath, NewAssetName, PackagePath, bSaveAssets"),
 		TEXT("effect_asset.write"));
-
-	AddTool(TEXT("MCP_BatchFxSetRendererDefaults"),
-		TEXT("设置 MassBattleFxRenderer 蓝图默认属性：Niagara、NDC_BurstFx、SubType、批大小和池化冷却"),
-		TEXT("TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets"),
-		TEXT("batch_fx.write"));
 
 	AddTool(TEXT("MCP_StyleSummarizeUnits"),
 		TEXT("按 StyleType、路径类别和推断风格族汇总单位"),

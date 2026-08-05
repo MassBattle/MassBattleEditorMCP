@@ -2079,7 +2079,9 @@ static TArray<FString> GetSourceMaterialTexturePaths(UMaterialInterface* Materia
 		return {};
 	}
 
-	for (UTexture* Texture : UMaterialEditingLibrary::GetMaterialUsedTextures(Material))
+	TArray<UTexture*> UsedTextures;
+	Material->GetUsedTextures(UsedTextures);
+	for (UTexture* Texture : UsedTextures)
 	{
 		if (Texture)
 		{
@@ -2578,6 +2580,38 @@ static bool MergeSkeletalMeshDescriptions(
 	return true;
 }
 
+static void ClearSkeletalMeshForRebuild(USkeletalMesh* SkeletalMesh)
+{
+	if (!SkeletalMesh)
+	{
+		return;
+	}
+
+	if (!SkeletalMesh->GetMorphTargets().IsEmpty())
+	{
+		SkeletalMesh->UnregisterAllMorphTarget();
+	}
+	if (FSkeletalMeshModel* ImportedModel = SkeletalMesh->GetImportedModel())
+	{
+		ImportedModel->EmptyOriginalReductionSourceMeshData();
+		ImportedModel->LODModels.Empty();
+		ImportedModel->InlineReductionCacheDatas.Empty();
+	}
+	SkeletalMesh->SetNumSourceModels(0);
+	SkeletalMesh->GetMaterials().Empty();
+	SkeletalMesh->GetRefSkeleton().Empty();
+	SkeletalMesh->SetSkeleton(nullptr);
+	SkeletalMesh->SetPhysicsAsset(nullptr);
+	SkeletalMesh->GetRefBasesInvMatrix().Empty();
+	SkeletalMesh->GetMeshOnlySocketList().Empty();
+	SkeletalMesh->GetNodeMappingData().Empty();
+	SkeletalMesh->GetMeshClothingAssets().Empty();
+	SkeletalMesh->SetHasActiveClothingAssets(false);
+	SkeletalMesh->GetSkinWeightProfiles().Empty();
+	SkeletalMesh->ReleaseResources();
+	SkeletalMesh->InvalidateDeriveDataCacheGUID();
+}
+
 static USkeletalMesh* CreatePersistentAssembledSkeletalMesh(
 	UPackage* Package,
 	const FString& AssetName,
@@ -2609,7 +2643,7 @@ static USkeletalMesh* CreatePersistentAssembledSkeletalMesh(
 	{
 		AssembledMesh->Modify();
 		AssembledMesh->PreEditChange(nullptr);
-		AssembledMesh->Clear();
+		ClearSkeletalMeshForRebuild(AssembledMesh);
 		AssembledMesh->SetFlags(RF_Public | RF_Standalone | RF_Transactional);
 	}
 	else

@@ -2,7 +2,6 @@
 
 #include "Async/Async.h"
 #include "BatchEffects/MassBattleEffectAssetMCPApi.h"
-#include "BatchEffects/MassBattleNiagaraMCPApi.h"
 #include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
 #include "HAL/RunnableThread.h"
@@ -314,23 +313,10 @@ FString UMassBattleMCPBridge::InternalExecuteCommand(const FString& CommandType,
 	if (CommandType == TEXT("MCP_EffectAssetSoftDelete")) { return UMassBattleEffectAssetMCPApi::MCP_EffectAssetSoftDelete(StringParam(Params, TEXT("AssetPath")), JsonParam(Params, TEXT("OptionsJson"))); }
 	if (CommandType == TEXT("MCP_EffectDuplicateAsset")) { return UMassBattleEffectAssetMCPApi::MCP_EffectDuplicateAsset(StringParam(Params, TEXT("SourceAssetPath")), StringParam(Params, TEXT("NewAssetName")), StringParam(Params, TEXT("PackagePath")), BoolParam(Params, TEXT("bSaveAssets"))); }
 	if (CommandType == TEXT("MCP_EffectDiscardUnsavedDuplicate")) { return UMassBattleEffectAssetMCPApi::MCP_EffectDiscardUnsavedDuplicate(StringParam(Params, TEXT("AssetPath"))); }
-	if (CommandType == TEXT("MCP_BatchFxReadRendererDefaults")) { return UMassBattleEffectAssetMCPApi::MCP_BatchFxReadRendererDefaults(StringParam(Params, TEXT("TargetClassPath"))); }
-	if (CommandType == TEXT("MCP_BatchFxSetRendererDefaults")) { return UMassBattleEffectAssetMCPApi::MCP_BatchFxSetRendererDefaults(StringParam(Params, TEXT("TargetClassPath")), StringParam(Params, TEXT("NiagaraSystemPath")), StringParam(Params, TEXT("NdcBurstFxPath")), IntParam(Params, TEXT("SubType")), IntParam(Params, TEXT("RenderBatchSize")), FloatParam(Params, TEXT("PoolingCooldown")), BoolParam(Params, TEXT("bSaveAssets"))); }
-
-	if (CommandType == TEXT("MCP_NiagaraGetApiStatus")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraGetApiStatus(); }
-	if (CommandType == TEXT("MCP_NiagaraQuery")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraQuery(JsonParam(Params, TEXT("QueryJson"))); }
-	if (CommandType == TEXT("MCP_NiagaraReadSummary")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraReadSummary(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("OptionsJson"))); }
-	if (CommandType == TEXT("MCP_NiagaraReadModule")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraReadModule(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("SelectorJson"))); }
-	if (CommandType == TEXT("MCP_NiagaraReadGraph")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraReadGraph(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("SelectorJson"))); }
-	if (CommandType == TEXT("MCP_NiagaraCompareSystems")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraCompareSystems(StringParam(Params, TEXT("SourceSystemPath")), StringParam(Params, TEXT("TargetSystemPath")), JsonParam(Params, TEXT("OptionsJson"))); }
-	if (CommandType == TEXT("MCP_NiagaraReadAll")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraReadAll(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("OptionsJson"))); }
-	if (CommandType == TEXT("MCP_NiagaraExportText")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraExportText(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("OptionsJson"))); }
-	if (CommandType == TEXT("MCP_NiagaraMergeWrite")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraMergeWrite(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("PatchJson")), BoolParam(Params, TEXT("bSaveAssets"))); }
-	if (CommandType == TEXT("MCP_NiagaraSetModulePin")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraSetModulePin(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("SelectorJson")), StringParam(Params, TEXT("PinName")), StringParam(Params, TEXT("ValueText")), BoolParam(Params, TEXT("bSaveAssets"))); }
-	if (CommandType == TEXT("MCP_NiagaraApplyGraphEdit")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraApplyGraphEdit(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("EditJson")), BoolParam(Params, TEXT("bSaveAssets"))); }
-	if (CommandType == TEXT("MCP_NiagaraSetEmitterEnabled")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraSetEmitterEnabled(StringParam(Params, TEXT("SystemPath")), StringParam(Params, TEXT("EmitterName")), BoolParam(Params, TEXT("bEnabled")), BoolParam(Params, TEXT("bSaveAssets"))); }
-	if (CommandType == TEXT("MCP_NiagaraDelete")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraDelete(StringParam(Params, TEXT("SystemPath")), JsonParam(Params, TEXT("DeleteJson")), BoolParam(Params, TEXT("bSaveAssets"))); }
-	if (CommandType == TEXT("MCP_NiagaraAddSpriteRenderer")) { return UMassBattleNiagaraMCPApi::MCP_NiagaraAddSpriteRenderer(StringParam(Params, TEXT("SystemPath")), StringParam(Params, TEXT("EmitterName")), JsonParam(Params, TEXT("RendererJson")), BoolParam(Params, TEXT("bSaveAssets"))); }
+	if (CommandType.StartsWith(TEXT("MCP_Niagara")) || CommandType.StartsWith(TEXT("MCP_BatchFx")))
+	{
+		return ErrorJson(TEXT("UE 5.7 does not expose Niagara MCP or Batch FX MCP because the required Niagara editor APIs are unavailable. Use the UE 5.8 main branch, or contact QQ 3440602831 for paid customization."));
+	}
 
 	if (CommandType == TEXT("MCP_DuplicateClassAsset")) { return UMassBattleEditorMCPApi::MCP_DuplicateClassAsset(StringParam(Params, TEXT("SourceClassPath")), StringParam(Params, TEXT("NewClassName")), StringParam(Params, TEXT("PackagePath"))); }
 	if (CommandType == TEXT("MCP_SetClassDefaultProperties")) { return UMassBattleEditorMCPApi::MCP_SetClassDefaultProperties(StringParam(Params, TEXT("TargetClassPath")), StringParam(Params, TEXT("AgentMeshPath")), StringParam(Params, TEXT("NiagaraSystemPath")), IntParam(Params, TEXT("SubType")), BoolParam(Params, TEXT("bSaveAssets"))); }

@@ -10,14 +10,12 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
 #include "HAL/FileManager.h"
-#include "Kismet2/KismetEditorUtilities.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "Misc/DateTime.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Modules/ModuleManager.h"
-#include "NiagaraDataChannelPublic.h"
 #include "NiagaraSystem.h"
 #include "ObjectTools.h"
 #include "Particles/ParticleEmitter.h"
@@ -27,7 +25,6 @@
 #include "Particles/ParticleSystem.h"
 #include "Particles/Spawn/ParticleModuleSpawn.h"
 #include "Particles/TypeData/ParticleModuleTypeDataBase.h"
-#include "Renderers/MassBattleFxRenderer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -81,7 +78,6 @@ static FString MakeErrorJson(const FString& ErrorMessage)
 	Root->SetStringField(TEXT("error"), ErrorMessage);
 	return ToJsonString(Root);
 }
-
 static FString NormalizeObjectPath(FString Path)
 {
 	Path.TrimStartAndEndInline();
@@ -476,7 +472,7 @@ static TSharedPtr<FJsonObject> BuildAssetSummary(UObject* Object, const TSharedP
 	else if (UNiagaraSystem* NiagaraSystem = Cast<UNiagaraSystem>(Object))
 	{
 		Root->SetStringField(TEXT("asset_kind"), TEXT("niagara_system"));
-		Root->SetStringField(TEXT("recommended_reader"), TEXT("MCP_NiagaraReadSummary or MCP_NiagaraExportText"));
+		Root->SetStringField(TEXT("recommended_reader"), TEXT("Use the UE 5.8 main branch for Niagara graph inspection; UE 5.7 keeps this generic asset summary only."));
 		Root->SetBoolField(TEXT("ready_to_run"), NiagaraSystem->IsReadyToRun());
 		Root->SetNumberField(TEXT("warmup_time"), NiagaraSystem->GetWarmupTime());
 	}
@@ -539,59 +535,6 @@ static UClass* ResolveClassAlias(const FString& Alias)
 	return nullptr;
 }
 
-static UClass* LoadFxRendererClass(const FString& TargetClassPath, FString& OutError)
-{
-	UClass* TargetClass = LoadObject<UClass>(nullptr, *NormalizeClassPath(TargetClassPath));
-	if (!TargetClass)
-	{
-		UObject* MaybeBlueprintObject = nullptr;
-		FString LoadError;
-		MaybeBlueprintObject = LoadAnyObject(TargetClassPath, LoadError);
-		if (UBlueprint* Blueprint = Cast<UBlueprint>(MaybeBlueprintObject))
-		{
-			TargetClass = Blueprint->GeneratedClass;
-		}
-	}
-
-	if (!TargetClass)
-	{
-		OutError = FString::Printf(TEXT("Failed to load target class: %s"), *TargetClassPath);
-		return nullptr;
-	}
-	if (!TargetClass->IsChildOf(AMassBattleFxRenderer::StaticClass()))
-	{
-		OutError = FString::Printf(TEXT("Target class is not a subclass of AMassBattleFxRenderer: %s"), *TargetClass->GetPathName());
-		return nullptr;
-	}
-	return TargetClass;
-}
-
-static TSharedPtr<FJsonObject> FxRendererDefaultsToJson(const UClass* TargetClass, const AMassBattleFxRenderer* CDO)
-{
-	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-	if (!TargetClass || !CDO)
-	{
-		return Obj;
-	}
-
-	Obj->SetStringField(TEXT("class_path"), TargetClass->GetPathName());
-	Obj->SetStringField(TEXT("blueprint_asset"), TEXT(""));
-	if (const UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(TargetClass))
-	{
-		if (const UBlueprint* Blueprint = Cast<UBlueprint>(BPClass->ClassGeneratedBy))
-		{
-			Obj->SetStringField(TEXT("blueprint_asset"), Blueprint->GetPathName());
-		}
-	}
-	Obj->SetStringField(TEXT("cdo_path"), CDO->GetPathName());
-	Obj->SetStringField(TEXT("niagara_system"), CDO->NiagaraSystemAsset ? CDO->NiagaraSystemAsset->GetPathName() : TEXT(""));
-	Obj->SetStringField(TEXT("ndc_burst_fx"), CDO->NDC_BurstFx ? CDO->NDC_BurstFx->GetPathName() : TEXT(""));
-	Obj->SetNumberField(TEXT("subtype"), CDO->SubType.Index);
-	Obj->SetNumberField(TEXT("render_batch_size"), CDO->RenderBatchSize);
-	Obj->SetNumberField(TEXT("pooling_cooldown"), CDO->PoollingCoolDown);
-	Obj->SetStringField(TEXT("edit_scope"), TEXT("blueprint_class_defaults"));
-	return Obj;
-}
 }
 
 FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetGetApiStatus()
@@ -620,8 +563,6 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectAssetGetApiStatus()
 	Tools.Add(Tool(TEXT("MCP_EffectAssetSoftDelete"), TEXT("effect_asset.lifecycle"), TEXT("Plan moving an unreferenced generic asset to trash; apply is blocked by default unless allow_unsafe_asset_move=true is supplied."), TEXT("AssetPath, OptionsJson")));
 	Tools.Add(Tool(TEXT("MCP_EffectDuplicateAsset"), TEXT("effect_asset.write"), TEXT("Duplicate an arbitrary asset into a package path."), TEXT("SourceAssetPath, NewAssetName, PackagePath, bSaveAssets")));
 	Tools.Add(Tool(TEXT("MCP_EffectDiscardUnsavedDuplicate"), TEXT("effect_asset.rollback"), TEXT("Discard only an unsaved in-memory duplicate created by this MCP session; persisted assets are always rejected."), TEXT("AssetPath")));
-	Tools.Add(Tool(TEXT("MCP_BatchFxReadRendererDefaults"), TEXT("batch_fx.read"), TEXT("Read AMassBattleFxRenderer Blueprint CDO defaults used by newly placed actors."), TEXT("TargetClassPath")));
-	Tools.Add(Tool(TEXT("MCP_BatchFxSetRendererDefaults"), TEXT("batch_fx.write"), TEXT("Set AMassBattleFxRenderer Blueprint CDO defaults: Niagara, NDC_BurstFx, SubType, batch size, and pooling cooldown."), TEXT("TargetClassPath, NiagaraSystemPath, NdcBurstFxPath, SubType, RenderBatchSize, PoolingCooldown, bSaveAssets")));
 	Root->SetArrayField(TEXT("tools"), Tools);
 	return ToJsonString(Root);
 }
@@ -965,127 +906,5 @@ FString UMassBattleEffectAssetMCPApi::MCP_EffectDiscardUnsavedDuplicate(const FS
 	{
 		Root->SetStringField(TEXT("error"), TEXT("ObjectTools failed to discard the unsaved duplicate"));
 	}
-	return ToJsonString(Root);
-}
-
-FString UMassBattleEffectAssetMCPApi::MCP_BatchFxReadRendererDefaults(const FString& TargetClassPath)
-{
-	using namespace MassBattleEffectAssetMCP;
-
-	FString ClassError;
-	UClass* TargetClass = LoadFxRendererClass(TargetClassPath, ClassError);
-	if (!TargetClass)
-	{
-		return MakeErrorJson(ClassError);
-	}
-
-	AMassBattleFxRenderer* CDO = TargetClass->GetDefaultObject<AMassBattleFxRenderer>();
-	if (!CDO)
-	{
-		return MakeErrorJson(TEXT("Failed to get AMassBattleFxRenderer CDO"));
-	}
-
-	TSharedPtr<FJsonObject> Root = MakeSuccessObject();
-	Root->SetObjectField(TEXT("defaults"), FxRendererDefaultsToJson(TargetClass, CDO));
-	return ToJsonString(Root);
-}
-
-FString UMassBattleEffectAssetMCPApi::MCP_BatchFxSetRendererDefaults(const FString& TargetClassPath, const FString& NiagaraSystemPath, const FString& NdcBurstFxPath, int32 SubType, int32 RenderBatchSize, float PoolingCooldown, bool bSaveAssets)
-{
-	using namespace MassBattleEffectAssetMCP;
-
-	FString ClassError;
-	UClass* TargetClass = LoadFxRendererClass(TargetClassPath, ClassError);
-	if (!TargetClass)
-	{
-		return MakeErrorJson(ClassError);
-	}
-
-	UNiagaraSystem* NiagaraSystem = nullptr;
-	if (!NiagaraSystemPath.TrimStartAndEnd().IsEmpty())
-	{
-		NiagaraSystem = LoadObject<UNiagaraSystem>(nullptr, *NormalizeObjectPath(NiagaraSystemPath));
-		if (!NiagaraSystem)
-		{
-			return MakeErrorJson(FString::Printf(TEXT("Failed to load NiagaraSystem: %s"), *NiagaraSystemPath));
-		}
-	}
-
-	UNiagaraDataChannelAsset* NdcBurstFx = nullptr;
-	if (!NdcBurstFxPath.TrimStartAndEnd().IsEmpty())
-	{
-		NdcBurstFx = LoadObject<UNiagaraDataChannelAsset>(nullptr, *NormalizeObjectPath(NdcBurstFxPath));
-		if (!NdcBurstFx)
-		{
-			return MakeErrorJson(FString::Printf(TEXT("Failed to load NiagaraDataChannelAsset: %s"), *NdcBurstFxPath));
-		}
-	}
-
-	AMassBattleFxRenderer* CDO = TargetClass->GetDefaultObject<AMassBattleFxRenderer>();
-	if (!CDO)
-	{
-		return MakeErrorJson(TEXT("Failed to get AMassBattleFxRenderer CDO"));
-	}
-
-	CDO->Modify();
-	if (NiagaraSystem)
-	{
-		CDO->NiagaraSystemAsset = NiagaraSystem;
-	}
-	if (NdcBurstFx)
-	{
-		CDO->NDC_BurstFx = NdcBurstFx;
-	}
-	if (SubType >= 0)
-	{
-		CDO->SubType.Index = SubType;
-	}
-	if (RenderBatchSize > 0)
-	{
-		CDO->RenderBatchSize = RenderBatchSize;
-	}
-	if (PoolingCooldown >= 0.0f)
-	{
-		CDO->PoollingCoolDown = PoolingCooldown;
-	}
-	CDO->MarkPackageDirty();
-
-	if (UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(TargetClass))
-	{
-		if (UBlueprint* Blueprint = Cast<UBlueprint>(BPClass->ClassGeneratedBy))
-		{
-			FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::SkipGarbageCollection);
-			Blueprint->MarkPackageDirty();
-		}
-	}
-
-	bool bSaved = false;
-	if (bSaveAssets)
-	{
-		UObject* SaveTarget = TargetClass;
-		if (UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(TargetClass))
-		{
-			if (UBlueprint* Blueprint = Cast<UBlueprint>(BPClass->ClassGeneratedBy))
-			{
-				SaveTarget = Blueprint;
-			}
-		}
-
-		FString SaveError;
-		bSaved = SaveLoadedAsset(SaveTarget, SaveError);
-		if (!bSaved)
-		{
-			return MakeErrorJson(SaveError);
-		}
-	}
-
-	TSharedPtr<FJsonObject> Root = MakeSuccessObject();
-	Root->SetStringField(TEXT("class_path"), TargetClass->GetPathName());
-	Root->SetStringField(TEXT("niagara_system"), CDO->NiagaraSystemAsset ? CDO->NiagaraSystemAsset->GetPathName() : TEXT(""));
-	Root->SetStringField(TEXT("ndc_burst_fx"), CDO->NDC_BurstFx ? CDO->NDC_BurstFx->GetPathName() : TEXT(""));
-	Root->SetNumberField(TEXT("subtype"), CDO->SubType.Index);
-	Root->SetNumberField(TEXT("render_batch_size"), CDO->RenderBatchSize);
-	Root->SetNumberField(TEXT("pooling_cooldown"), CDO->PoollingCoolDown);
-	Root->SetBoolField(TEXT("saved"), bSaved);
 	return ToJsonString(Root);
 }

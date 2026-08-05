@@ -12,6 +12,8 @@
 
 如需为 UE 5.6/5.7 定制批处理能力，可联系 QQ `3440602831` 付费外包。
 
+> 当前是 UE 5.7 兼容分支：保留基础 MCP 工作流，但不会注册 Niagara MCP 与 Batch FX MCP。下文保留的 Niagara 与批处理制作内容仅用于说明 UE 5.8 `main` 的完整能力。
+
 我一直认为 RTS 是最适合思考 AI 社会的游戏类型：人类不应该被困在每一个低层动作里，而应该负责战略、约束、取舍和目标；AI 和工具链负责把这些目标拆成可执行的战术动作。未来真正稀缺的人，不是只会反复执行细节的人，而是能提出目标、判断方向、组织系统并承担后果的人。
 
 这也是我喜欢 RTS 的原因。一个真正有野心的 RTS 不应该因为技术不够，就把原本成千上万的单位砍成几个可控对象，最后把“大规模战争”做成一个玩具。规模本身不是装饰，它会反过来决定玩法、战术空间、表现方式和工具链。
@@ -46,9 +48,9 @@ MassBattleEditorMCP 的作用，是在 Mass Battle 工作流里把“战术层�
 
 仓库内置可给其他 AI 直接使用的 Codex skills，位置在 `skills/`：
 
-- `skills/massbattle-effect-mcp`：把任意源特效转成消费 MassBattleFrame 批处理输入的、忠于原效果的 Niagara。
-- `skills/massbattle-instant-damage-fx`：制作由 Agent 在命中时刻直接结算的攻击，以及发射/命中的一次性 Burst FX。
-- `skills/massbattle-projectile-authoring`：制作由 Mass Projectile Entity 负责飞行、碰撞、伤害和生命周期的攻击，以及 Attached 飞行 FX 与 Burst 生命周期 FX。
+- `skills/massbattle-effect-mcp`（仅 UE 5.8 `main`）：把任意源特效转成消费 MassBattleFrame 批处理输入的、忠于原效果的 Niagara。
+- `skills/massbattle-instant-damage-fx`（批处理制作仅 UE 5.8 `main`）：制作由 Agent 在命中时刻直接结算的攻击，以及发射/命中的一次性 Burst FX。
+- `skills/massbattle-projectile-authoring`（批处理制作仅 UE 5.8 `main`）：制作由 Mass Projectile Entity 负责飞行、碰撞、伤害和生命周期的攻击，以及 Attached 飞行 FX 与 Burst 生命周期 FX。
 - `skills/massbattle-unit-authoring`：从当前选择、SkeletalMesh 或带 Socket 武器的 Actor 蓝图组合体创建、编辑单位，并把已经验证的直接攻击或抛体配置接入单位数组。
 
 这些 Skill 对 Niagara 批处理只有一个定义：
@@ -89,7 +91,7 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 ```
 
 安装后需要重启 Codex 或新开会话；UE 编辑器也需要加载本插件，bridge 才会开始监听。
-安装成功后应能看到 `massbattle-editor-mcp`，并可调用 `unit_get`、`unit_create`、`projectile_get`、`projectile_write`、`projectile_validate`、`editor_apply_create_vat_unit_from_selection`、`effect_asset_read_summary`、`niagara_set_module_pin`、`batch_fx_read_renderer_defaults`、`batch_fx_set_renderer_defaults` 等原语工具。
+安装成功后应能看到 `massbattle-editor-mcp`，并可调用 `unit_get`、`unit_create`、`projectile_get`、`projectile_write`、`projectile_validate`、`editor_apply_create_vat_unit_from_selection`、`effect_asset_read_summary` 等原语工具。
 
 单位制作的默认 AI 入口应对应官方 `/MassBattle/Core/MassBattleTools` 的 DoAll 按钮：一次 apply 调用完成 mesh、material、VAT texture、renderer、unit config 的创建或刷新。非 selection 入口要求完整 canonical 输入，并会在写任何资产前先 validate；缺字段、旧别名、静态兜底或未覆盖旧生成 mesh 都直接失败。plan/validate 工具保留给诊断和 dry-run，不是正常制作流程的必经步骤。
 
@@ -101,8 +103,8 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 | --- | --- | :---: | --- |
 | 连接与诊断 | `massbattle_ping` | 可用 | 确认 Codex MCP server 能连接 UE 编辑器 bridge。 |
 | 连接与诊断 | `unit_get_api_status` | 可用 | 读取 Unit MCP 能力表。 |
-| 连接与诊断 | `effect_asset_get_api_status` | 可用 | 读取 Effect Asset / Batch FX MCP 能力表。 |
-| 连接与诊断 | `niagara_get_api_status` | 可用 | 读取 Niagara MCP 能力表。 |
+| 连接与诊断 | `effect_asset_get_api_status` | 可用 | 读取通用 Effect Asset MCP 能力表。 |
+| 连接与诊断 | `niagara_get_api_status` | 仅 UE 5.8 | 读取 Niagara MCP 能力表。 |
 | 连接与诊断 | `projectile_get_api_status` | 可用 | 读取 Projectile DataAsset 的 CRUD、Schema 与验证能力。 |
 | Unit MCP | `unit_list` | 可用 | 列出 `MassBattleAgentConfigDataAsset` 单位配置资产。 |
 | Unit MCP | `unit_get` | 可用 | 读取一个单位配置，支持 simple/full 视图和默认过滤。 |
@@ -140,16 +142,16 @@ MassBattleEditorMCP 的 Codex 入口由两层组成：
 | Effect Asset MCP | `effect_asset_export_text` | 可用 | 导出确定性文本，供 AI 精读和复核。 |
 | Effect Asset MCP | `effect_asset_soft_delete` | 可用 | 规划把未引用资产软移动到 `_Trash`；运行态移动默认阻止，需显式 force。 |
 | Effect Asset MCP | `effect_duplicate_asset` | 可用 | 加法复制资产，不删除或覆盖源资产。 |
-| Niagara MCP | `niagara_query` | 可用 | 按路径或名称查找 Niagara System。 |
-| Niagara MCP | `niagara_read_summary` | 可用 | 读取 Niagara system、emitter、renderer、user parameter、module 摘要。 |
-| Niagara MCP | `niagara_read_module` | 可用 | 精读指定 Niagara module 节点和 pin。 |
-| Niagara MCP | `niagara_export_text` | 可用 | 导出 Niagara 确定性文本。 |
-| Niagara MCP | `niagara_merge_write` | 可用 | 并集写 Niagara 属性，不负责删除。 |
-| Niagara MCP | `niagara_set_module_pin` | 可用 | 写一个 Niagara FunctionCall 模块输入 pin 的默认值；默认拒绝已连接 pin。 |
-| Niagara MCP | `niagara_set_emitter_enabled` | 可用 | 显式启用或禁用一个 Niagara emitter handle。 |
-| Niagara MCP | `niagara_delete` | 可用 | 显式删除 renderer、user parameter、禁用 emitter 等。 |
-| Batch FX MCP | `batch_fx_read_renderer_defaults` | 可用 | 读取 `AMassBattleFxRenderer` 蓝图默认值；这些默认值会被之后拖进关卡的新 Actor 实例继承。 |
-| Batch FX MCP | `batch_fx_set_renderer_defaults` | 可用 | 设置 `AMassBattleFxRenderer` 蓝图默认值，包括 `NiagaraSystemAsset`、`NDC_BurstFx`、`SubType`、batch size 和 pooling cooldown。 |
+| Niagara MCP | `niagara_query` | 仅 UE 5.8 | 按路径或名称查找 Niagara System。 |
+| Niagara MCP | `niagara_read_summary` | 仅 UE 5.8 | 读取 Niagara system、emitter、renderer、user parameter、module 摘要。 |
+| Niagara MCP | `niagara_read_module` | 仅 UE 5.8 | 精读指定 Niagara module 节点和 pin。 |
+| Niagara MCP | `niagara_export_text` | 仅 UE 5.8 | 导出 Niagara 确定性文本。 |
+| Niagara MCP | `niagara_merge_write` | 仅 UE 5.8 | 并集写 Niagara 属性，不负责删除。 |
+| Niagara MCP | `niagara_set_module_pin` | 仅 UE 5.8 | 写一个 Niagara FunctionCall 模块输入 pin 的默认值；默认拒绝已连接 pin。 |
+| Niagara MCP | `niagara_set_emitter_enabled` | 仅 UE 5.8 | 显式启用或禁用一个 Niagara emitter handle。 |
+| Niagara MCP | `niagara_delete` | 仅 UE 5.8 | 显式删除 renderer、user parameter、禁用 emitter 等。 |
+| Batch FX MCP | `batch_fx_read_renderer_defaults` | 仅 UE 5.8 | 读取 `AMassBattleFxRenderer` 蓝图默认值；这些默认值会被之后拖进关卡的新 Actor 实例继承。 |
+| Batch FX MCP | `batch_fx_set_renderer_defaults` | 仅 UE 5.8 | 设置 `AMassBattleFxRenderer` 蓝图默认值，包括 `NiagaraSystemAsset`、`NDC_BurstFx`、`SubType`、batch size 和 pooling cooldown。 |
 
 忠于源特效的批处理闭环是：精读源资产，复制原 Niagara，以 `niagara_compare_systems(mode=exact)` 证明复制体与源一致，只增加 MassBattleFrame 输入适配，再以 `mode=translation` 验证保真和可运行性。模板近似只能作为单独的可选优化版本，不能算作原特效转译完成。转译后要验证 Renderer 蓝图默认值，并使用当前可用的关卡编辑工具把 Renderer Actor 放进测试关卡，再通过 Unit MCP 或 Projectile MCP 接入真实触发链；工具能完成的关卡工作不能再交还给用户手动处理。
 
@@ -190,7 +192,7 @@ apply 调用会先执行 validate，失败时不写资产。plan/validate 调用
 它不是运行时功能，而是给 AI 和 MCP 工具使用的制作上下文：扫描根目录、单位组织规则、单位 authoring 默认值，以及批处理 FX 模板。
 `unit_create` 未传 `template_unit` 时，会读取 `authoring_defaults.default_unit_template` 作为默认单位模板；项目应在使用前配置这个路径。
 
-模板流程只用于全新特效或明确要求的优化复刻。若任务是忠于 Marketplace/客户源资产的转译，必须复制原 Niagara 并保留其 emitter、renderer、材质、曲线、事件和时序，模板不能替代源资产。
+本节的 Batch FX 模板步骤仅适用于 UE 5.8 `main`。模板流程只用于全新特效或明确要求的优化复刻。若任务是忠于 Marketplace/客户源资产的转译，必须复制原 Niagara 并保留其 emitter、renderer、材质、曲线、事件和时序，模板不能替代源资产。
 
 可选模板流程是：
 

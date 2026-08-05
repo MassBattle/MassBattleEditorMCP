@@ -20,7 +20,6 @@ public class MassBattleEditorMCP : ModuleRules
 			new string[]
 			{
 				"Core",
-				"MassCore",
 				"MassEntity",
 				"MassAPI",
 				"MassBattle",
@@ -39,7 +38,6 @@ public class MassBattleEditorMCP : ModuleRules
 				"UnrealEd",
 				"EditorSubsystem",
 				"Niagara",
-				"NiagaraEditor",
 				"AnimToTexture",
 				"AnimToTextureEditor",
 				"AnimationBlueprintLibrary",
