@@ -2080,7 +2080,12 @@ static TArray<FString> GetSourceMaterialTexturePaths(UMaterialInterface* Materia
 	}
 
 	TArray<UTexture*> UsedTextures;
-	Material->GetUsedTextures(UsedTextures);
+	Material->GetUsedTextures(
+		UsedTextures,
+		EMaterialQualityLevel::High,
+		true,
+		ERHIFeatureLevel::SM5,
+		true);
 	for (UTexture* Texture : UsedTextures)
 	{
 		if (Texture)
@@ -2597,7 +2602,7 @@ static void ClearSkeletalMeshForRebuild(USkeletalMesh* SkeletalMesh)
 		ImportedModel->LODModels.Empty();
 		ImportedModel->InlineReductionCacheDatas.Empty();
 	}
-	SkeletalMesh->SetNumSourceModels(0);
+	SkeletalMesh->ResetLODInfo();
 	SkeletalMesh->GetMaterials().Empty();
 	SkeletalMesh->GetRefSkeleton().Empty();
 	SkeletalMesh->SetSkeleton(nullptr);

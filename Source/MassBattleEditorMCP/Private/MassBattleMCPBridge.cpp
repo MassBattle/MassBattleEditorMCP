@@ -315,7 +315,7 @@ FString UMassBattleMCPBridge::InternalExecuteCommand(const FString& CommandType,
 	if (CommandType == TEXT("MCP_EffectDiscardUnsavedDuplicate")) { return UMassBattleEffectAssetMCPApi::MCP_EffectDiscardUnsavedDuplicate(StringParam(Params, TEXT("AssetPath"))); }
 	if (CommandType.StartsWith(TEXT("MCP_Niagara")) || CommandType.StartsWith(TEXT("MCP_BatchFx")))
 	{
-		return ErrorJson(TEXT("UE 5.7 does not expose Niagara MCP or Batch FX MCP because the required Niagara editor APIs are unavailable. Use the UE 5.8 main branch, or contact QQ 3440602831 for paid customization."));
+		return ErrorJson(TEXT("UE 5.6 does not expose Niagara MCP or Batch FX MCP because the required Niagara editor APIs are unavailable. Use the UE 5.8 main branch, or contact QQ 3440602831 for paid customization."));
 	}
 
 	if (CommandType == TEXT("MCP_DuplicateClassAsset")) { return UMassBattleEditorMCPApi::MCP_DuplicateClassAsset(StringParam(Params, TEXT("SourceClassPath")), StringParam(Params, TEXT("NewClassName")), StringParam(Params, TEXT("PackagePath"))); }

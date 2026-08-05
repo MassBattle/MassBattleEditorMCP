@@ -1840,7 +1840,12 @@ static UTexture2D* FindUsedTexture2D(UMaterialInterface* Material, const TArray<
 	}
 
 	TArray<UTexture*> UsedTextures;
-	Material->GetUsedTextures(UsedTextures);
+	Material->GetUsedTextures(
+		UsedTextures,
+		EMaterialQualityLevel::High,
+		true,
+		ERHIFeatureLevel::SM5,
+		true);
 	TArray<UTexture2D*> UsedTexture2Ds;
 	TArray<UTexture2D*> DirectSourceTextures;
 	for (UObject* ReferencedTexture : Material->GetReferencedTextures())

@@ -472,7 +472,7 @@ static TSharedPtr<FJsonObject> BuildAssetSummary(UObject* Object, const TSharedP
 	else if (UNiagaraSystem* NiagaraSystem = Cast<UNiagaraSystem>(Object))
 	{
 		Root->SetStringField(TEXT("asset_kind"), TEXT("niagara_system"));
-		Root->SetStringField(TEXT("recommended_reader"), TEXT("Use the UE 5.8 main branch for Niagara graph inspection; UE 5.7 keeps this generic asset summary only."));
+		Root->SetStringField(TEXT("recommended_reader"), TEXT("Use the UE 5.8 main branch for Niagara graph inspection; UE 5.6 keeps this generic asset summary only."));
 		Root->SetBoolField(TEXT("ready_to_run"), NiagaraSystem->IsReadyToRun());
 		Root->SetNumberField(TEXT("warmup_time"), NiagaraSystem->GetWarmupTime());
 	}

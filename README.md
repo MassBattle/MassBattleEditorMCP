@@ -12,7 +12,7 @@
 
 For paid UE 5.6/5.7 batch-processing customization, contact QQ `3440602831`.
 
-> You are viewing the UE 5.7 compatibility branch. It keeps core MCP workflows, but intentionally does not register Niagara MCP or Batch FX MCP. The Niagara and batch-authoring material retained below documents the full UE 5.8 `main` branch only.
+> You are viewing the UE 5.6 compatibility branch. It keeps core MCP workflows, but intentionally does not register Niagara MCP or Batch FX MCP. The Niagara and batch-authoring material retained below documents the full UE 5.8 `main` branch only.
 
 I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 

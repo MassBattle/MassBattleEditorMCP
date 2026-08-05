@@ -12,7 +12,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogMassBattleEffectAssetMCPApi, Log, All);
  *
  * These tools intentionally do not perform one-click conversion. They provide
  * asset discovery, text inspection, and duplication. Batch FX authoring is
- * intentionally unavailable on the UE 5.7 compatibility branch.
+ * intentionally unavailable on the UE 5.6 compatibility branch.
  */
 UCLASS()
 class MASSBATTLEEDITORMCP_API UMassBattleEffectAssetMCPApi : public UBlueprintFunctionLibrary

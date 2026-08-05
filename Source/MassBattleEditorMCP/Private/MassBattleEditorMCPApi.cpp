@@ -1402,7 +1402,7 @@ FString UMassBattleEditorMCPApi::MCP_GetApiStatus()
 	Root->SetStringField(TEXT("api_name"), TEXT("MassBattleEditorMCP"));
 	Root->SetStringField(TEXT("version"), TEXT("1.0.0"));
 	Root->SetStringField(TEXT("module"), TEXT("MassBattleEditorMCP"));
-	Root->SetStringField(TEXT("engine_branch"), TEXT("5.7"));
+	Root->SetStringField(TEXT("engine_branch"), TEXT("5.6"));
 	Root->SetBoolField(TEXT("niagara_mcp_supported"), false);
 	Root->SetBoolField(TEXT("batch_fx_mcp_supported"), false);
 	Root->SetStringField(TEXT("batch_fx_customization_contact"), TEXT("QQ 3440602831"));
