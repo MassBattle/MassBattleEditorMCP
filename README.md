@@ -8,13 +8,15 @@
 
 | Branch | Unreal Engine | Core MCP | Niagara MCP | Batch FX MCP | Access and support |
 | --- | --- | :---: | :---: | :---: | --- |
-| `main` | UE 5.8 | Included | Included | Included | Complete open-source feature set; no subscription is required for these listed features. |
-| **`5.7` (current)** | UE 5.7 | Included | Not included | Not included | Core MCP is open source. UE 5.7 batch processing requires paid customization or a support subscription. |
-| `5.6` | UE 5.6 | Included | Not included | Not included | Core MCP is open source. UE 5.6 batch processing requires paid customization or a support subscription. |
+| `main` | UE 5.8 | Included | Included | Included | Primary verified branch. |
+| **`5.7` (current)** | UE 5.7 | Included | Not included | Not included | Compatibility branch with a reduced verified feature set. |
+| `5.6` | UE 5.6 | Included | Not included | Not included | Compatibility branch with a reduced verified feature set. |
 
-Existing code in every branch remains free and open source. Payment is only required when you need Niagara MCP, Batch FX MCP, or ongoing batch-processing compatibility work on UE 5.6/5.7. Contact QQ `3440602831` for a paid support subscription or outsourced customization.
+MassBattleEditorMCP is a free and open-source project, not a commercial plugin, so compatibility with every Unreal Engine version is not guaranteed. Each branch only describes the feature set currently verified for that engine version.
 
-Request template: `I use UE 5.7 and need Niagara MCP and/or Batch FX MCP compatibility. Please evaluate a paid support subscription or outsourced implementation for my project.`
+If engine-version differences make a required feature unavailable, contact QQ `3440602831`. The author can evaluate a custom adjustment for the target or a newer engine version. This is one-off custom development rather than a support subscription; the requested fee only needs to cover the cost of a ChatGPT Pro ×20 subscription.
+
+Request template: `I use UE 5.7, and engine compatibility prevents me from using [feature]. Please evaluate a custom adjustment for my target or a newer UE version. I understand the one-off fee is intended to cover a ChatGPT Pro ×20 subscription.`
 
 > Niagara and batch-authoring material retained later in this document describes the full UE 5.8 `main` branch only.
 
