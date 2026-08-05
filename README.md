@@ -2,19 +2,21 @@
 
 [中文文档](zh.md)
 
-## Current Branch And Support Policy
+## Current Branch And Compatibility Policy
 
 **Current branch: `main` — Unreal Engine 5.8.** This is the primary branch and includes the complete open-source MCP feature set.
 
-| Branch | Unreal Engine | Core MCP | Niagara MCP | Batch FX MCP | Access and support |
+| Branch | Unreal Engine | Core MCP | Niagara MCP | Batch FX MCP | Batch-effect workflow |
 | --- | --- | :---: | :---: | :---: | --- |
-| **`main` (current)** | UE 5.8 | Included | Included | Included | Included in the open-source branch; no subscription is required for these listed features. |
-| `5.7` | UE 5.7 | Included | Not included | Not included | Core MCP remains open source. Legacy-engine batch processing requires paid customization or a support subscription. |
-| `5.6` | UE 5.6 | Included | Not included | Not included | Core MCP remains open source. Legacy-engine batch processing requires paid customization or a support subscription. |
+| **`main` (current)** | UE 5.8 | Included | Included | Included | Use the MCP tools with AI, or send source VFX assets to the author for customization. |
+| `5.7` | UE 5.7 | Included | Not included | Not included | Send source VFX assets and requirements to the author for batch-effect customization. |
+| `5.6` | UE 5.6 | Included | Not included | Not included | Send source VFX assets and requirements to the author for batch-effect customization. |
 
-Existing code in every branch remains free and open source. Payment is only required when you need Niagara MCP, Batch FX MCP, or ongoing batch-processing compatibility work on UE 5.6/5.7. Contact QQ `3440602831` for a paid support subscription or outsourced customization.
+MassBattleEditorMCP is a free and open-source project, not a commercial plugin, so it does not promise that every feature will be compatible with every Unreal Engine version. The small UE 5.8 API differences in the core MCP have already been adapted on the `5.6` and `5.7` branches. The only remaining version limitation is Niagara MCP and Batch FX MCP: both depend extensively on internal UE 5.8 `NiagaraEditor` APIs.
 
-Request template: `I use UE 5.6/5.7 and need Niagara MCP and/or Batch FX MCP compatibility. Please evaluate a paid support subscription or outsourced implementation for my project.`
+Batch effects are a real production requirement. If you use UE 5.6 or 5.7 and need source effects converted for MassBattle batch processing, you do not need to migrate the project or repeatedly work through the conversion with AI yourself. Send the source VFX assets, target Unreal Engine version, and effect requirements to the author via QQ `3440602831`; the author can customize and deliver the batch effects directly for your project. The customization fee only needs to be enough for the author to subscribe to ChatGPT Pro ×20.
+
+Request template: `I use UE 5.7. These source VFX assets need to be converted into MassBattle batch effects: [assets and requirements]. Please customize and deliver the batch effects for this engine version.`
 
 I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 
