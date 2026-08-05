@@ -2,17 +2,21 @@
 
 [中文文档](zh.md)
 
-## Engine Version Branches
+## Current Branch And Support Policy
 
-| Branch | Unreal Engine | Support |
-| --- | --- | --- |
-| `main` | UE 5.8 | Primary branch with the complete MCP feature set, including Niagara MCP and Batch FX MCP. |
-| `5.7` | UE 5.7 | Core MCP compatibility; Niagara MCP and Batch FX MCP are not exposed because the required Niagara editor APIs are unavailable. |
-| `5.6` | UE 5.6 | Core MCP compatibility; Niagara MCP and Batch FX MCP are not exposed because the required Niagara editor APIs are unavailable. |
+**Current branch: `5.7` — Unreal Engine 5.7.** This compatibility branch includes the open-source core MCP workflows, but does not include Niagara MCP or Batch FX MCP.
 
-For paid UE 5.6/5.7 batch-processing customization, contact QQ `3440602831`.
+| Branch | Unreal Engine | Core MCP | Niagara MCP | Batch FX MCP | Access and support |
+| --- | --- | :---: | :---: | :---: | --- |
+| `main` | UE 5.8 | Included | Included | Included | Complete open-source feature set; no subscription is required for these listed features. |
+| **`5.7` (current)** | UE 5.7 | Included | Not included | Not included | Core MCP is open source. UE 5.7 batch processing requires paid customization or a support subscription. |
+| `5.6` | UE 5.6 | Included | Not included | Not included | Core MCP is open source. UE 5.6 batch processing requires paid customization or a support subscription. |
 
-> You are viewing the UE 5.7 compatibility branch. It keeps core MCP workflows, but intentionally does not register Niagara MCP or Batch FX MCP. The Niagara and batch-authoring material retained below documents the full UE 5.8 `main` branch only.
+Existing code in every branch remains free and open source. Payment is only required when you need Niagara MCP, Batch FX MCP, or ongoing batch-processing compatibility work on UE 5.6/5.7. Contact QQ `3440602831` for a paid support subscription or outsourced customization.
+
+Request template: `I use UE 5.7 and need Niagara MCP and/or Batch FX MCP compatibility. Please evaluate a paid support subscription or outsourced implementation for my project.`
+
+> Niagara and batch-authoring material retained later in this document describes the full UE 5.8 `main` branch only.
 
 I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 
