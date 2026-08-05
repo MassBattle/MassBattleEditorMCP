@@ -2,17 +2,23 @@
 
 [中文文档](zh.md)
 
-## Engine Version Branches
+## Current Branch And Support Policy
 
-| Branch | Unreal Engine | Support |
-| --- | --- | --- |
-| `main` | UE 5.8 | Primary branch with the complete MCP feature set, including Niagara MCP and Batch FX MCP. |
-| `5.7` | UE 5.7 | Core MCP compatibility; Niagara MCP and Batch FX MCP are not exposed because the required Niagara editor APIs are unavailable. |
-| `5.6` | UE 5.6 | Core MCP compatibility; Niagara MCP and Batch FX MCP are not exposed because the required Niagara editor APIs are unavailable. |
+**Current branch: `5.6` — Unreal Engine 5.6.** This compatibility branch includes the open-source core MCP workflows, but does not include Niagara MCP or Batch FX MCP.
 
-For paid UE 5.6/5.7 batch-processing customization, contact QQ `3440602831`.
+| Branch | Unreal Engine | Core MCP | Niagara MCP | Batch FX MCP | Access and support |
+| --- | --- | :---: | :---: | :---: | --- |
+| `main` | UE 5.8 | Included | Included | Included | Primary verified branch. |
+| `5.7` | UE 5.7 | Included | Not included | Not included | Compatibility branch with a reduced verified feature set. |
+| **`5.6` (current)** | UE 5.6 | Included | Not included | Not included | Compatibility branch with a reduced verified feature set. |
 
-> You are viewing the UE 5.6 compatibility branch. It keeps core MCP workflows, but intentionally does not register Niagara MCP or Batch FX MCP. The Niagara and batch-authoring material retained below documents the full UE 5.8 `main` branch only.
+MassBattleEditorMCP is a free and open-source project, not a commercial plugin, so compatibility with every Unreal Engine version is not guaranteed. Each branch only describes the feature set currently verified for that engine version.
+
+If engine-version differences make a required feature unavailable, contact QQ `3440602831`. The author can evaluate a custom adjustment for the target or a newer engine version. This is one-off custom development rather than a support subscription; the requested fee only needs to cover the cost of a ChatGPT Pro ×20 subscription.
+
+Request template: `I use UE 5.6, and engine compatibility prevents me from using [feature]. Please evaluate a custom adjustment for my target or a newer UE version. I understand the one-off fee is intended to cover a ChatGPT Pro ×20 subscription.`
+
+> Niagara and batch-authoring material retained later in this document describes the full UE 5.8 `main` branch only.
 
 I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 
