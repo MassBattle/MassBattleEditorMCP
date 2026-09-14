@@ -1,4 +1,4 @@
-# Only plugin descriptors, source, configuration and assets are versioned.
+# Public plugin source, documentation and supported user tooling.
 /*
 !/.gitignore
 !/.gitattributes
@@ -6,6 +6,10 @@
 !/[Rr][Ee][Aa][Dd][Mm][Ee]*
 !/[Dd]oxyfile*
 !/.[Dd]oxyfile*
+!/zh.md
+!/Docs
+!/skills
+!/Scripts
 !/*.uplugin
 !/Source/
 !/Config/

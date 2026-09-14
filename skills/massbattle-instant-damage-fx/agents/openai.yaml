@@ -1,0 +1,4 @@
+interface:
+  display_name: "MassBattle Instant Damage FX"
+  short_description: "Author direct hits and one-shot batch FX"
+  default_prompt: "Use $massbattle-instant-damage-fx to author a direct MassBattle hit, source-faithfully lower its launch/impact visuals into Burst Batch FX, align them with TimeOfHit, and route any travelling gameplay object to $massbattle-projectile-authoring."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "MassBattle Projectile Authoring"
+  short_description: "Configure Mass projectile attacks end to end"
+  default_prompt: "Use $massbattle-projectile-authoring to configure the unit launch entry, projectile DataAsset movement/damage/triggers, Attached flight FX, and Burst launch/hit/removal FX. Disable direct TimeOfHit damage unless the design intentionally has two damage paths."
