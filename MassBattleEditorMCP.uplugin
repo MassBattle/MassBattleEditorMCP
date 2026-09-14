@@ -15,6 +15,9 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
+	"LocalizationTargets": [
+		{ "Name": "MassBattleEditorMCP", "LoadingPolicy": "Editor", "ConfigGenerationPolicy": "Never" }
+	],
 	"Modules": [
 		{
 			"Name": "MassBattleEditorMCP",

@@ -1,0 +1,142 @@
+{
+  "FormatVersion": 1,
+  "Namespace": "",
+  "Subnamespaces": [
+    {
+      "Namespace": "UObjectDisplayNames",
+      "Children": [
+        {
+          "Source": {
+            "Text": "Update"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:Update",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Destroy"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:DestroySource",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Export Path"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:ExportPath",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Exported Unit"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:ExportedUnit",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Unit Data"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:UnitData",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Last Report"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:LastReport",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "MassBattle Unit Export"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSourceSettings",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Export Root"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSourceSettings:ExportRoot",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Namespace": "FMassBattleEditorMCPModule",
+      "Children": [
+        {
+          "Source": {
+            "Text": "Unit Export Rules"
+          },
+          "Keys": [
+            {
+              "Key": "ExportRules",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Shared source Actor export defaults."
+          },
+          "Keys": [
+            {
+              "Key": "ExportRulesTooltip",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "Namespace": "MassBattleUnitSource",
+      "Children": [
+        {
+          "Source": {
+            "Text": "Update / Destroy"
+          },
+          "Keys": [
+            {
+              "Key": "Actions",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

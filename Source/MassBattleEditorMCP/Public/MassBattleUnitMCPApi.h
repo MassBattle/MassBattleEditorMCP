@@ -19,6 +19,9 @@ class MASSBATTLEEDITORMCP_API UMassBattleUnitMCPApi : public UBlueprintFunctionL
 	GENERATED_BODY()
 
 public:
+	/** Shared implementation for the source Actor's Update action; no new MCP command. */
+	static FString UpdateSource(class AMassBattleUnitSource* Source, bool bSaveAssets);
+
 	/** List MassBattle unit DataAssets with compact balance-oriented summaries. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")
 	static FString MCP_UnitList(const FString& OptionsJson);
@@ -78,10 +81,7 @@ public:
 	static FString MCP_UnitGetApiStatus();
 };
 
-/**
- * Style-oriented MCP helpers. These do not depend on UMGMCP; they organize units
- * by MassBattle's StyleType plus path/name heuristics and can produce move plans.
- */
+/** Independent MCP helpers for organizing units by style and producing move plans. */
 UCLASS()
 class MASSBATTLEEDITORMCP_API UMassBattleStyleMCPApi : public UBlueprintFunctionLibrary
 {

@@ -1,0 +1,120 @@
+{
+  "FormatVersion": 2,
+  "Namespace": "",
+  "Subnamespaces": [
+    {
+      "Namespace": "UObjectDisplayNames",
+      "Children": [
+        {
+          "Key": "MassBattleUnitSource:Update",
+          "Source": {
+            "Text": "Update"
+          },
+          "Translation": {
+            "Text": "更新"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:DestroySource",
+          "Source": {
+            "Text": "Destroy"
+          },
+          "Translation": {
+            "Text": "删除"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:ExportPath",
+          "Source": {
+            "Text": "Export Path"
+          },
+          "Translation": {
+            "Text": "导出路径"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:ExportedUnit",
+          "Source": {
+            "Text": "Exported Unit"
+          },
+          "Translation": {
+            "Text": "导出单位"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:UnitData",
+          "Source": {
+            "Text": "Unit Data"
+          },
+          "Translation": {
+            "Text": "单位配置"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:LastReport",
+          "Source": {
+            "Text": "Last Report"
+          },
+          "Translation": {
+            "Text": "上次结果"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSourceSettings",
+          "Source": {
+            "Text": "MassBattle Unit Export"
+          },
+          "Translation": {
+            "Text": "MassBattle 单位导出"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSourceSettings:ExportRoot",
+          "Source": {
+            "Text": "Export Root"
+          },
+          "Translation": {
+            "Text": "默认导出目录"
+          }
+        }
+      ]
+    },
+    {
+      "Namespace": "FMassBattleEditorMCPModule",
+      "Children": [
+        {
+          "Key": "ExportRules",
+          "Source": {
+            "Text": "Unit Export Rules"
+          },
+          "Translation": {
+            "Text": "单位导出规则"
+          }
+        },
+        {
+          "Key": "ExportRulesTooltip",
+          "Source": {
+            "Text": "Shared source Actor export defaults."
+          },
+          "Translation": {
+            "Text": "源码 Actor 共用的默认导出规则。"
+          }
+        }
+      ]
+    },
+    {
+      "Namespace": "MassBattleUnitSource",
+      "Children": [
+        {
+          "Key": "Actions",
+          "Source": {
+            "Text": "Update / Destroy"
+          },
+          "Translation": {
+            "Text": "更新 / 删除"
+          }
+        }
+      ]
+    }
+  ]
+}
