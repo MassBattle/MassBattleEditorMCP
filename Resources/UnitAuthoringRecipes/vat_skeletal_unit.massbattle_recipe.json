@@ -19,11 +19,42 @@
     "material_overrides": "Optional array of material paths or {slot_index, slot_name, slot_name_contains, material} objects applied to the generated StaticMesh after material instance generation.",
     "source_renderer_class": "Renderer Blueprint generated class used as the template when duplicating a renderer. Defaults to the MassBattle AgentRenderer template.",
     "niagara_system": "Optional Niagara system assigned to the renderer defaults. Defaults to the MassBattle AgentRenderer template Niagara system.",
+    "combat_fx": "Optional object for new-unit creation: {weapon_category, impact_surface, muzzle_offset:{X,Y,Z}}. weapon_category accepts pistol, rifle, automatic, cannon, artillery, rocket, flame, melee or unarmed; impact_surface accepts flesh, metal or masonry and describes the new unit's own hit surface. Omitted categories follow the selected style's combat_fx_defaults rules for output path, unit name and family. muzzle_offset is an entity-local position; when omitted, every distinct AtSelf muzzle anchor from the template is reused, including its rotation, Delay and BindToAnimIndex; the style offset is used only when no template anchor exists. Explicit unit_patch.Data.Attack.SpawnFx and unit_patch.Data.Hit.SpawnFx arrays, including [], take precedence independently. A disabled Attack uses unarmed; a nonempty Attack.SpawnProjectile array leaves default Attack.SpawnFx empty because projectile lifecycle FX own launch visuals. Inherited projectile references use the style's known visual variants; explicitly supplied SpawnProjectile references remain authoritative. combat_fx is passed to UnitCreate only when creating a new unit, not when refreshing target_unit. It does not choose damage ownership or change attack timing, damage or movement.",
     "unit_patch": "Union-merge patch applied to the cloned or target unit DataAsset. For crowd compactness, keep Data.PhysicsShared.ColliderMult at one of the recipe presets: 0.85 for slight (15%) or 0.70 for noticeable (30%).",
     "target_package_path": "Optional override for the generated content package path.",
     "target_unit_package_path": "Optional override for the generated unit DataAsset package path.",
     "output_root": "Optional override for generated content root."
   },
+  "combat_fx_examples": [
+    {
+      "description": "Fragment to merge into a complete new direct-fire infantry VAT spec. Supply a measured muzzle_offset for the source unit.",
+      "spec_fragment": {
+        "replace_arrays": true,
+        "combat_fx": {
+          "weapon_category": "rifle",
+          "impact_surface": "flesh",
+          "muzzle_offset": {"X": 10, "Y": 0, "Z": 10}
+        },
+        "unit_patch": {
+          "Data": {
+            "Attack": {"bEnable": true, "SpawnProjectile": []}
+          }
+        }
+      }
+    },
+    {
+      "description": "Fragment preserving explicitly empty attack and hit FX arrays. The presentation defaults cannot add effects to either array.",
+      "spec_fragment": {
+        "combat_fx": {"weapon_category": "cannon", "impact_surface": "metal"},
+        "unit_patch": {
+          "Data": {
+            "Attack": {"SpawnFx": []},
+            "Hit": {"SpawnFx": []}
+          }
+        }
+      }
+    }
+  ],
   "pipeline_note": "These are internal DoAll stages for diagnostics. Normal AI authoring should call the apply entry once and inspect warnings.",
   "pipeline": [
     {

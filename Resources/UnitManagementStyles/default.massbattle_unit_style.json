@@ -58,23 +58,55 @@
     "families": {
       "infantry": {
         "folder": "Army/Soldier",
-        "keywords": ["soldier", "infantry", "human", "japan", "soviet", "china", "chinese", "brit", "german", "us", "ww2", "toon"]
+        "keywords": [
+          "soldier",
+          "infantry",
+          "human",
+          "japan",
+          "soviet",
+          "china",
+          "chinese",
+          "brit",
+          "german",
+          "us",
+          "ww2",
+          "toon"
+        ]
       },
       "officer": {
         "folder": "Army/Officer",
-        "keywords": ["officer", "commander", "leader"]
+        "keywords": [
+          "officer",
+          "commander",
+          "leader"
+        ]
       },
       "armored": {
         "folder": "Army/Tank",
-        "keywords": ["tank", "apc", "vehicle"]
+        "keywords": [
+          "tank",
+          "apc",
+          "vehicle"
+        ]
       },
       "air": {
         "folder": "Aircraft",
-        "keywords": ["helicopter", "fighter", "jet", "aircraft"]
+        "keywords": [
+          "helicopter",
+          "fighter",
+          "jet",
+          "aircraft"
+        ]
       },
       "building": {
         "folder": "Building",
-        "keywords": ["camp", "spawner", "building", "city", "flag"]
+        "keywords": [
+          "camp",
+          "spawner",
+          "building",
+          "city",
+          "flag"
+        ]
       }
     }
   },
@@ -96,11 +128,20 @@
       "source_niagara": "/MassBattle/Demo/Projectile/Batched/Rocket/Renderer/NS_FxRenderer_Rocket.NS_FxRenderer_Rocket",
       "source_renderer_blueprint": "/MassBattle/Demo/Projectile/Batched/Rocket/Renderer/BP_FxRenderer_Rocket.BP_FxRenderer_Rocket",
       "ndc_burst_fx": "/MassBattle/Core/FxRenderer/NS_Modules/NDC_BurstFx.NDC_BurstFx",
-      "keep_emitters": ["Muzzle"],
-      "disable_emitters": ["Core", "Hit", "Trail"],
+      "keep_emitters": [
+        "Muzzle"
+      ],
+      "disable_emitters": [
+        "Core",
+        "Hit",
+        "Trail"
+      ],
       "renderer_kind": "NiagaraMeshRendererProperties",
       "batch_mode": "burst",
-      "recommended_unit_fields": ["Hit.SpawnFx", "Death.SpawnFx"],
+      "recommended_unit_fields": [
+        "Hit.SpawnFx",
+        "Death.SpawnFx"
+      ],
       "recommended_transform": "(Rotation=(X=0.000000,Y=0.000000,Z=0.000000,W=1.000000),Translation=(X=0.000000,Y=0.000000,Z=280.000000),Scale3D=(X=30.000000,Y=30.000000,Z=30.000000))",
       "recommended_quantity": 8,
       "recommended_lifespan": 2
@@ -112,7 +153,10 @@
       "ndc_burst_fx": "/MassBattle/Demo/SharedFx/Explosion/Batched/NDC_Explosion.NDC_Explosion",
       "renderer_kind": "NiagaraSpriteRendererProperties",
       "batch_mode": "burst",
-      "recommended_unit_fields": ["Death.SpawnFx", "Hit.SpawnFx"],
+      "recommended_unit_fields": [
+        "Death.SpawnFx",
+        "Hit.SpawnFx"
+      ],
       "note": "Keep the renderer CDO NDC matching the Niagara graph; this template does not use the core NDC_BurstFx asset."
     },
     "projectile_muzzle_burst": {
@@ -120,22 +164,26 @@
       "source_niagara": "/MassBattle/Demo/Projectile/Batched/Bullet/Renderer/NS_FxRenderer_Bullet.NS_FxRenderer_Bullet",
       "source_renderer_blueprint": "/MassBattle/Demo/Projectile/Batched/Bullet/Renderer/BP_FxRenderer_Bullet.BP_FxRenderer_Bullet",
       "ndc_burst_fx": "/MassBattle/Core/FxRenderer/NS_Modules/NDC_BurstFx.NDC_BurstFx",
-      "keep_emitters": ["Muzzle"],
+      "keep_emitters": [
+        "Muzzle"
+      ],
       "renderer_kind": "NiagaraMeshRendererProperties",
       "batch_mode": "burst",
-      "recommended_unit_fields": ["Attack.SpawnFx"]
+      "recommended_unit_fields": [
+        "Attack.SpawnFx"
+      ]
     }
   },
   "authoring_defaults": {
     "recipe_id": "vat_skeletal_unit",
-    "default_unit_template": "/MassBattle/Demo/Agent/HumanSoldier/AgentConfig_HumanSoldier_RTS.AgentConfig_HumanSoldier_RTS",
+    "default_unit_template": "/Game/Unit/Shared/Defaults/AgentConfig_CombatDefault_Infantry.AgentConfig_CombatDefault_Infantry",
     "default_unit_templates": {
-      "default": "/MassBattle/Demo/Agent/HumanSoldier/AgentConfig_HumanSoldier_RTS.AgentConfig_HumanSoldier_RTS",
-      "infantry": "/MassBattle/Demo/Agent/HumanSoldier/AgentConfig_HumanSoldier_RTS.AgentConfig_HumanSoldier_RTS",
-      "officer": "/MassBattle/Demo/Agent/HumanSoldier/AgentConfig_HumanSoldier_RTS.AgentConfig_HumanSoldier_RTS",
-      "armored": "/MassBattle/Demo/Agent/Tank/AgentConfig_Tank_RTS.AgentConfig_Tank_RTS",
-      "air": "/MassBattle/Demo/Agent/Helicopter/AgentConfig_Helicopter_RTS.AgentConfig_Helicopter_RTS",
-      "building": "/MassBattle/Demo/Building/RTS/AgentConfig_Spawner_RTS.AgentConfig_Spawner_RTS"
+      "default": "/Game/Unit/Shared/Defaults/AgentConfig_CombatDefault_Infantry.AgentConfig_CombatDefault_Infantry",
+      "infantry": "/Game/Unit/Shared/Defaults/AgentConfig_CombatDefault_Infantry.AgentConfig_CombatDefault_Infantry",
+      "officer": "/Game/Unit/Shared/Defaults/AgentConfig_CombatDefault_Infantry.AgentConfig_CombatDefault_Infantry",
+      "armored": "/Game/Unit/Shared/Defaults/AgentConfig_CombatDefault_Armored.AgentConfig_CombatDefault_Armored",
+      "air": "/Game/Unit/Shared/Defaults/AgentConfig_CombatDefault_Air.AgentConfig_CombatDefault_Air",
+      "building": "/Game/Unit/Shared/Defaults/AgentConfig_CombatDefault_Building.AgentConfig_CombatDefault_Building"
     },
     "default_parent_material": "/MassBattle/Core/AgentRenderer/VAT/M_VATMaster.M_VATMaster",
     "default_source_renderer_class": "/MassBattle/Core/AgentRenderer/BP_AgentRenderer_Template.BP_AgentRenderer_Template_C",
@@ -156,5 +204,977 @@
       "/MassBattle/Demo",
       "/MassBattle/Test"
     ]
+  },
+  "combat_fx_defaults": {
+    "schema_version": 1,
+    "asset_root": "/Game/Unit/Shared/FX/Optimized/Combat",
+    "default_weapon": "rifle",
+    "default_surface": "flesh",
+    "weapon_rules": [
+      {
+        "value": "melee",
+        "contains_any": [
+          "Scout_",
+          "ArmyKnife",
+          "NRK40",
+          "melee"
+        ]
+      },
+      {
+        "value": "flame",
+        "contains_any": [
+          "Flamethrower",
+          "flame"
+        ]
+      },
+      {
+        "value": "rocket",
+        "contains_any": [
+          "Bazooka",
+          "Panzerschreck",
+          "PIAT",
+          "Rocket",
+          "Missile",
+          "Katyusha"
+        ]
+      },
+      {
+        "value": "automatic",
+        "contains_any": [
+          "MachineGun",
+          "Submachine",
+          "_MG",
+          "Panzer_I_Ausf",
+          "L3_35",
+          "T26_Model_1931",
+          "Aircraft/",
+          "Fighter",
+          "Autocannon",
+          "ArmoredPersonnel",
+          "/air"
+        ]
+      },
+      {
+        "value": "pistol",
+        "contains_any": [
+          "Officer",
+          "Medic",
+          "Raider",
+          "pistol"
+        ]
+      },
+      {
+        "value": "artillery",
+        "contains_any": [
+          "Artillery",
+          "SU_152",
+          "Howitzer",
+          "Mortar",
+          "CoastalBattery",
+          "Battleship",
+          "Battlecruiser"
+        ]
+      },
+      {
+        "value": "cannon",
+        "contains_any": [
+          "Tank",
+          "ArmoredCar",
+          "/Naval/",
+          "Cruiser",
+          "Destroyer",
+          "Frigate",
+          "AntiAircraft",
+          "cannon",
+          "armored"
+        ]
+      }
+    ],
+    "surface_rules": [
+      {
+        "value": "flesh",
+        "contains_any": [
+          "/Infantry/",
+          "infantry",
+          "human"
+        ]
+      },
+      {
+        "value": "metal",
+        "contains_any": [
+          "Hedgehog",
+          "BarbedWire",
+          "Steel",
+          "WireBarrier"
+        ]
+      },
+      {
+        "value": "masonry",
+        "contains_any": [
+          "/Building/",
+          "building",
+          "bunker",
+          "factory",
+          "obstacle",
+          "spawner"
+        ]
+      },
+      {
+        "value": "metal",
+        "contains_any": [
+          "/Tank/",
+          "/Vehicle/",
+          "/Artillery/",
+          "/Aircraft/",
+          "/Naval/",
+          "vehicle",
+          "tank",
+          "aircraft",
+          "naval",
+          "armored",
+          "/air"
+        ]
+      }
+    ],
+    "weapon_profiles": {
+      "pistol": {
+        "attack_fx": [
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 201,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 4,
+                "Y": 4,
+                "Z": 4
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.065,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 202,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 0,
+                "Y": 0.45,
+                "Z": 1
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.12,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 0.4,
+              "Z": 8192,
+              "W": 0.08000000000000002
+            },
+            "AgentBehaviorState": "None"
+          }
+        ],
+        "muzzle_size": 4,
+        "smoke_size": 0
+      },
+      "rifle": {
+        "attack_fx": [
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 201,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 5.5,
+                "Y": 5.5,
+                "Z": 5.5
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.065,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 202,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 0,
+                "Y": 0.6,
+                "Z": 1
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.12,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 0.4,
+              "Z": 8192,
+              "W": 0.08000000000000002
+            },
+            "AgentBehaviorState": "None"
+          }
+        ],
+        "muzzle_size": 5.5,
+        "smoke_size": 0
+      },
+      "automatic": {
+        "attack_fx": [
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 201,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 6,
+                "Y": 6,
+                "Z": 6
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.065,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 202,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 0,
+                "Y": 0.7,
+                "Z": 1
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.12,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 0.4,
+              "Z": 8192,
+              "W": 0.08000000000000002
+            },
+            "AgentBehaviorState": "None"
+          }
+        ],
+        "muzzle_size": 6,
+        "smoke_size": 0
+      },
+      "cannon": {
+        "attack_fx": [
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 201,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 18,
+                "Y": 18,
+                "Z": 18
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.065,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 205,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 12,
+                "Y": 12,
+                "Z": 12
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.28,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 202,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 0,
+                "Y": 1,
+                "Z": 1
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.12,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          }
+        ],
+        "muzzle_size": 18,
+        "smoke_size": 12
+      },
+      "artillery": {
+        "attack_fx": [
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 201,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 24,
+                "Y": 24,
+                "Z": 24
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.065,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 205,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 20,
+                "Y": 20,
+                "Z": 20
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.28,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 202,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 0,
+                "Y": 1.2,
+                "Z": 1
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.12,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          }
+        ],
+        "muzzle_size": 24,
+        "smoke_size": 20
+      },
+      "rocket": {
+        "attack_fx": [
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 201,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 12,
+                "Y": 12,
+                "Z": 12
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.065,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 205,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 14,
+                "Y": 14,
+                "Z": 14
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.28,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          },
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 202,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 0,
+                "Y": 1,
+                "Z": 1
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.12,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          }
+        ],
+        "muzzle_size": 12,
+        "smoke_size": 14
+      },
+      "flame": {
+        "attack_fx": [
+          {
+            "bEnable": true,
+            "SubType": "SubType1",
+            "SubType_Index": 203,
+            "StyleType_Index": 0,
+            "SoftNiagaraAsset": "None",
+            "SoftCascadeAsset": "None",
+            "Transform": {
+              "Rotation": {
+                "X": 0,
+                "Y": 0,
+                "Z": 0,
+                "W": 1
+              },
+              "Translation": {
+                "X": 10,
+                "Y": 0,
+                "Z": 10
+              },
+              "Scale3D": {
+                "X": 0,
+                "Y": 5,
+                "Z": 1
+              }
+            },
+            "bAttached": false,
+            "bDespawnWhenNoParent": false,
+            "SpawnOrigin": "AtSelf",
+            "Quantity": 1,
+            "Delay": 0,
+            "LifeSpan": 0.23,
+            "BindToAnimIndex": -1,
+            "SpawnProbability": {
+              "X": 0,
+              "Y": 1,
+              "Z": 8192,
+              "W": 0.2
+            },
+            "AgentBehaviorState": "None"
+          }
+        ],
+        "muzzle_size": 0,
+        "smoke_size": 0
+      },
+      "melee": {
+        "attack_fx": [],
+        "muzzle_size": 0,
+        "smoke_size": 0
+      },
+      "unarmed": {
+        "attack_fx": [],
+        "muzzle_size": 0,
+        "smoke_size": 0
+      }
+    },
+    "hit_profiles": {
+      "flesh": [
+        {
+          "bEnable": true,
+          "SubType": "SubType1",
+          "SubType_Index": 205,
+          "StyleType_Index": 0,
+          "SoftNiagaraAsset": "None",
+          "SoftCascadeAsset": "None",
+          "Transform": {
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 1
+            },
+            "Translation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Scale3D": {
+              "X": 5,
+              "Y": 5,
+              "Z": 5
+            }
+          },
+          "bAttached": false,
+          "bDespawnWhenNoParent": false,
+          "Quantity": 1,
+          "Delay": 0,
+          "LifeSpan": 0.28,
+          "BindToAnimIndex": -1,
+          "SpawnProbability": {
+            "X": 0,
+            "Y": 0.85,
+            "Z": 8192,
+            "W": 0.17
+          },
+          "AgentBehaviorState": "None"
+        }
+      ],
+      "metal": [
+        {
+          "bEnable": true,
+          "SubType": "SubType1",
+          "SubType_Index": 204,
+          "StyleType_Index": 0,
+          "SoftNiagaraAsset": "None",
+          "SoftCascadeAsset": "None",
+          "Transform": {
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 1
+            },
+            "Translation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Scale3D": {
+              "X": 7,
+              "Y": 7,
+              "Z": 7
+            }
+          },
+          "bAttached": false,
+          "bDespawnWhenNoParent": false,
+          "Quantity": 1,
+          "Delay": 0,
+          "LifeSpan": 0.085,
+          "BindToAnimIndex": -1,
+          "SpawnProbability": {
+            "X": 0,
+            "Y": 0.9,
+            "Z": 8192,
+            "W": 0.18000000000000002
+          },
+          "AgentBehaviorState": "None"
+        }
+      ],
+      "masonry": [
+        {
+          "bEnable": true,
+          "SubType": "SubType1",
+          "SubType_Index": 205,
+          "StyleType_Index": 0,
+          "SoftNiagaraAsset": "None",
+          "SoftCascadeAsset": "None",
+          "Transform": {
+            "Rotation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0,
+              "W": 1
+            },
+            "Translation": {
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            },
+            "Scale3D": {
+              "X": 12,
+              "Y": 12,
+              "Z": 12
+            }
+          },
+          "bAttached": false,
+          "bDespawnWhenNoParent": false,
+          "Quantity": 1,
+          "Delay": 0,
+          "LifeSpan": 0.28,
+          "BindToAnimIndex": -1,
+          "SpawnProbability": {
+            "X": 0,
+            "Y": 0.85,
+            "Z": 8192,
+            "W": 0.17
+          },
+          "AgentBehaviorState": "None"
+        }
+      ]
+    },
+    "projectile_visual_variants": {
+      "/Game/ArmyVFX/WinyunqRelease/ProjectileCombat/Projectiles/ProjectileConfig_ArmyVFX_ArtilleryShell.ProjectileConfig_ArmyVFX_ArtilleryShell": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_ArmyVFX_ArtilleryShell.PC_Combat_ArmyVFX_ArtilleryShell",
+      "/Game/ArmyVFX/WinyunqRelease/ProjectileCombat/Projectiles/ProjectileConfig_ArmyVFX_Bullet.ProjectileConfig_ArmyVFX_Bullet": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_ArmyVFX_Bullet.PC_Combat_ArmyVFX_Bullet",
+      "/Game/ArmyVFX/WinyunqRelease/ProjectileCombat/Projectiles/ProjectileConfig_ArmyVFX_Rocket.ProjectileConfig_ArmyVFX_Rocket": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_ArmyVFX_Rocket.PC_Combat_ArmyVFX_Rocket",
+      "/Game/ArmyVFX/WinyunqRelease/ProjectileCombat/Projectiles/ProjectileConfig_ArmyVFX_TankShell.ProjectileConfig_ArmyVFX_TankShell": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_ArmyVFX_TankShell.PC_Combat_ArmyVFX_TankShell",
+      "/Game/Unit/Actor/Army/Artillery/Soviet/MCPGenerated/Projectiles/ProjectileConfig_Soviet_BM_13_Katyusha.ProjectileConfig_Soviet_BM_13_Katyusha": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Soviet_BM_13_Katyusha.PC_Combat_Soviet_BM_13_Katyusha",
+      "/Game/Unit/Actor/Army/Artillery/Soviet/MCPGenerated/Projectiles/ProjectileConfig_Soviet_SU_152.ProjectileConfig_Soviet_SU_152": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Soviet_SU_152.PC_Combat_Soviet_SU_152",
+      "/Game/Unit/Actor/Building/Defence/Bunker/China/MCPGenerated/Projectiles/ProjectileConfig_MCP_ChinaAntiTankBunker_Shell.ProjectileConfig_MCP_ChinaAntiTankBunker_Shell": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_MCP_ChinaAntiTankBunker_Shell.PC_Combat_MCP_ChinaAntiTankBunker_Shell",
+      "/MassBattle/Demo/Projectile/Batched/Bullet/ProjectileConfig_Bullet_FPS.ProjectileConfig_Bullet_FPS": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Bullet_FPS.PC_Combat_Bullet_FPS",
+      "/MassBattle/Demo/Projectile/Batched/Bullet/ProjectileConfig_Bullet_RTS.ProjectileConfig_Bullet_RTS": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Bullet_RTS.PC_Combat_Bullet_RTS",
+      "/MassBattle/Demo/Projectile/Batched/Bullet/ProjectileConfig_Bullet_WarSim.ProjectileConfig_Bullet_WarSim": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Bullet_WarSim.PC_Combat_Bullet_WarSim",
+      "/MassBattle/Demo/Projectile/Batched/CannonBall/ProjectileConfig_CannonBall_RTS.ProjectileConfig_CannonBall_RTS": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_CannonBall_RTS.PC_Combat_CannonBall_RTS",
+      "/MassBattle/Demo/Projectile/Batched/CannonBall/ProjectileConfig_CannonBall_WarSim.ProjectileConfig_CannonBall_WarSim": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_CannonBall_WarSim.PC_Combat_CannonBall_WarSim",
+      "/MassBattle/Demo/Projectile/Batched/CannonBall/ProjectileConfig_TankShell_RTS_Point.ProjectileConfig_TankShell_RTS_Point": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_TankShell_RTS_Point.PC_Combat_TankShell_RTS_Point",
+      "/MassBattle/Demo/Projectile/Batched/CannonBall/ProjectileConfig_TankShell_WarSim_Point.ProjectileConfig_TankShell_WarSim_Point": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_TankShell_WarSim_Point.PC_Combat_TankShell_WarSim_Point",
+      "/MassBattle/Demo/Projectile/Batched/Missile/ProjectileConfig_Missile_RTS.ProjectileConfig_Missile_RTS": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Missile_RTS.PC_Combat_Missile_RTS",
+      "/MassBattle/Demo/Projectile/Batched/Missile/ProjectileConfig_Missile_WarSim.ProjectileConfig_Missile_WarSim": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Missile_WarSim.PC_Combat_Missile_WarSim",
+      "/MassBattle/Demo/Projectile/Batched/Rocket/ProjectileConfig_Rocket_RTS.ProjectileConfig_Rocket_RTS": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Rocket_RTS.PC_Combat_Rocket_RTS",
+      "/MassBattle/Demo/Projectile/Batched/Rocket/ProjectileConfig_Rocket_WarSim.ProjectileConfig_Rocket_WarSim": "/Game/Unit/Shared/FX/Optimized/Combat/Projectiles/PC_Combat_Rocket_WarSim.PC_Combat_Rocket_WarSim"
+    },
+    "notes": "Use existing MassBattleFrame batch FX and bundled CannonBall/Bullet asset configuration directly. Do not add runtime batching mechanisms or engine batching overrides. Hit feedback comes from actual damage at HitLocation. Weapon visuals do not change damage, timing or projectile movement. Explicit SpawnFx overrides win; muzzle_offset is in entity-local units."
   }
 }

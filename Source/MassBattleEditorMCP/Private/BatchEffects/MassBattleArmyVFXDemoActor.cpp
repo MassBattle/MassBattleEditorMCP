@@ -377,7 +377,7 @@ FEntityHandle AMassBattleArmyVFXDemoActor::SpawnRecipeStep(
 
 	FFxConfig Config;
 	Config.bEnable = true;
-	Config.SubType = UMassBattleTagHelpers::SubTypeIndexToEnum(Spec.SubType);
+	Config.SubType_Index = Spec.SubType;
 	Config.StyleType = static_cast<EEStyleType>(FMath::Clamp(StyleIndex, 0, 31));
 	Config.SoftNiagaraAsset.Reset();
 	Config.SoftCascadeAsset.Reset();
@@ -392,7 +392,7 @@ FEntityHandle AMassBattleArmyVFXDemoActor::SpawnRecipeStep(
 	Config.bDespawnWhenNoParent = false;
 
 	const FTransform SpawnTransform(FRotator::ZeroRotator, WorldLocation, FVector::OneVector);
-	const FEntityHandle Host = UMassBattleFuncLib::SpawnBatchedFx(this, Config, SpawnTransform);
+	const FEntityHandle Host = UMassBattleFuncLib::SpawnBatchedFxWithTransform(this, Config, SpawnTransform);
 	if (!Host.IsSet())
 	{
 		UE_LOG(LogMassBattleEditorMCP, Error,

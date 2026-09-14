@@ -2558,6 +2558,334 @@ FString UMassBattleUnitMCPApi::MCP_UnitCreate(const FString& CreateSpecJson, boo
 		}
 	}
 
+	// A cloned template is structural input, not balance authority. Apply the
+	// project engagement policy after initial data so mobility and attack settings
+	// are final, while every explicitly authored engagement field keeps precedence.
+	// | 克隆模板只提供结构，不拥有数值。先合并初始数据，再按最终移动/攻击状态补齐交战默认值；
+	//   所有显式提供的 Trace / Attack / Chase 字段始终优先。
+	UMassBattleAgentConfigDataAsset* Unit = Cast<UMassBattleAgentConfigDataAsset>(NewUnit);
+	if (!Unit)
+	{
+		return MakeErrorJson(TEXT("Created asset is not a UMassBattleAgentConfigDataAsset"));
+	}
+
+	const TSharedPtr<FJsonObject> ExplicitRoot = InitialData && InitialData->IsValid()
+		? *InitialData
+		: MakeShared<FJsonObject>();
+	const TSharedPtr<FJsonObject>* ExplicitDataField = nullptr;
+	const TSharedPtr<FJsonObject> ExplicitData = ExplicitRoot->TryGetObjectField(TEXT("Data"), ExplicitDataField)
+		&& ExplicitDataField && ExplicitDataField->IsValid()
+		? *ExplicitDataField
+		: ExplicitRoot;
+	const TSharedPtr<FJsonObject>* ExplicitTraceField = nullptr;
+	const TSharedPtr<FJsonObject> ExplicitTrace = ExplicitData->TryGetObjectField(TEXT("Trace"), ExplicitTraceField)
+		&& ExplicitTraceField && ExplicitTraceField->IsValid()
+		? *ExplicitTraceField
+		: nullptr;
+	const TSharedPtr<FJsonObject>* ExplicitAttackField = nullptr;
+	const TSharedPtr<FJsonObject> ExplicitAttack = ExplicitData->TryGetObjectField(TEXT("Attack"), ExplicitAttackField)
+		&& ExplicitAttackField && ExplicitAttackField->IsValid()
+		? *ExplicitAttackField
+		: nullptr;
+	const TSharedPtr<FJsonObject>* ExplicitChaseField = nullptr;
+	const TSharedPtr<FJsonObject> ExplicitChase = ExplicitData->TryGetObjectField(TEXT("Chase"), ExplicitChaseField)
+		&& ExplicitChaseField && ExplicitChaseField->IsValid()
+		? *ExplicitChaseField
+		: nullptr;
+	const TSharedPtr<FJsonObject>* ExplicitSectorField = nullptr;
+	const TSharedPtr<FJsonObject> ExplicitSector = ExplicitTrace.IsValid()
+		&& ExplicitTrace->TryGetObjectField(TEXT("SectorTrace"), ExplicitSectorField)
+		&& ExplicitSectorField && ExplicitSectorField->IsValid()
+		? *ExplicitSectorField
+		: nullptr;
+
+	const bool bMoving = Unit->Move.bEnable;
+	const bool bArmed = Unit->Attack.bEnable && Unit->Attack.Range > 0.0f;
+	const bool bArmedStationary = !bMoving && bArmed;
+	constexpr double ChaseAcceptanceRangeRatio = 0.85;
+	constexpr double HitToleranceRangeRatio = 1.15;
+	constexpr double TracePerceptionRangeRatio = 1.30;
+	const double DefaultTraceRadius = bArmed
+		? Unit->Attack.Range * TracePerceptionRangeRatio
+		: (bMoving ? 1024.0 : 0.0);
+	bool bHasExplicitTraceRadius = false;
+	TSharedPtr<FJsonObject> SectorPatch = MakeShared<FJsonObject>();
+	for (const TCHAR* StateName : { TEXT("Common"), TEXT("Sleep"), TEXT("Patrol"), TEXT("Chase"), TEXT("Reinforce") })
+	{
+		const TSharedPtr<FJsonObject>* ExplicitStateField = nullptr;
+		const TSharedPtr<FJsonObject> ExplicitState = ExplicitSector.IsValid()
+			&& ExplicitSector->TryGetObjectField(StateName, ExplicitStateField)
+			&& ExplicitStateField && ExplicitStateField->IsValid()
+			? *ExplicitStateField
+			: nullptr;
+		const bool bExplicitRadius = ExplicitState.IsValid() && ExplicitState->HasField(TEXT("TraceRadius"));
+		bHasExplicitTraceRadius |= bExplicitRadius;
+		if (!bExplicitRadius)
+		{
+			TSharedPtr<FJsonObject> StatePatch = MakeShared<FJsonObject>();
+			StatePatch->SetNumberField(TEXT("TraceRadius"), DefaultTraceRadius);
+			SectorPatch->SetObjectField(StateName, StatePatch);
+		}
+	}
+
+	TSharedPtr<FJsonObject> TracePatch = MakeShared<FJsonObject>();
+	TracePatch->SetObjectField(TEXT("SectorTrace"), SectorPatch);
+	if (!bMoving && (!ExplicitTrace.IsValid() || !ExplicitTrace->HasField(TEXT("bEnable"))) && !bHasExplicitTraceRadius)
+	{
+		TracePatch->SetBoolField(TEXT("bEnable"), bArmedStationary);
+	}
+	TSharedPtr<FJsonObject> EngagementDataPatch = MakeShared<FJsonObject>();
+	EngagementDataPatch->SetObjectField(TEXT("Trace"), TracePatch);
+	if (bArmed && (!ExplicitAttack.IsValid() || !ExplicitAttack->HasField(TEXT("RangeToleranceHit"))))
+	{
+		TSharedPtr<FJsonObject> AttackPatch = MakeShared<FJsonObject>();
+		AttackPatch->SetNumberField(TEXT("RangeToleranceHit"), Unit->Attack.Range * HitToleranceRangeRatio);
+		EngagementDataPatch->SetObjectField(TEXT("Attack"), AttackPatch);
+	}
+	if (bArmed && (!ExplicitChase.IsValid() || !ExplicitChase->HasField(TEXT("AcceptanceRadius"))))
+	{
+		TSharedPtr<FJsonObject> ChasePatch = MakeShared<FJsonObject>();
+		ChasePatch->SetNumberField(TEXT("AcceptanceRadius"), Unit->Attack.Range * ChaseAcceptanceRangeRatio);
+		EngagementDataPatch->SetObjectField(TEXT("Chase"), ChasePatch);
+	}
+	TSharedPtr<FJsonObject> EngagementPolicyPatch = MakeShared<FJsonObject>();
+	EngagementPolicyPatch->SetObjectField(TEXT("Data"), EngagementDataPatch);
+
+	TSharedPtr<FJsonObject> EngagementPolicyOptions = MakeShared<FJsonObject>();
+	TArray<TSharedPtr<FJsonObject>> EngagementPolicyPatches = BuildUnionMergePatches(Unit, EngagementPolicyPatch, EngagementPolicyOptions, MergeErrors);
+	if (!MergeErrors.IsEmpty())
+	{
+		TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+		Root->SetBoolField(TEXT("success"), false);
+		Root->SetStringField(TEXT("error"), TEXT("MCP engagement default policy contains non-mergeable fields"));
+		Root->SetArrayField(TEXT("merge_errors"), MergeErrors);
+		return ToJsonString(Root);
+	}
+	for (const TSharedPtr<FJsonObject>& Patch : EngagementPolicyPatches)
+	{
+		FPatchPreview Preview;
+		if (!ApplyPatch(NewUnit, Patch, false, Preview))
+		{
+			return MakeErrorJson(Preview.Error);
+		}
+		AppliedDiffs.Add(MakeShared<FJsonValueObject>(PatchPreviewToJson(Preview)));
+	}
+
+	// Project presentation defaults share the existing style profile and merge path.
+	// | 表现默认值复用风格配置和现有写入入口，不改变攻击、伤害或移动逻辑。
+	const auto JsonObject = [](const TSharedPtr<FJsonObject>& Parent, const TCHAR* Key)
+	{
+		const TSharedPtr<FJsonObject>* Child = nullptr;
+		return Parent.IsValid() && Parent->TryGetObjectField(Key, Child) && Child && Child->IsValid()
+			? *Child : MakeShared<FJsonObject>();
+	};
+	const TSharedPtr<FJsonObject> FxPolicy = JsonObject(LoadUnitStyleConfig(Spec), TEXT("combat_fx_defaults"));
+	TSharedPtr<FJsonObject> FxDefaultReport = MakeShared<FJsonObject>();
+	if (!FxPolicy->Values.IsEmpty())
+	{
+		const TSharedPtr<FJsonObject> FxSpec = JsonObject(Spec, TEXT("combat_fx"));
+		// DoAll shares its final patch for FX precedence; gameplay arrays keep their merge policy.
+		// | DoAll 传最终补丁确定 FX 优先级；玩法数组仍遵守原合并选项。
+		const TSharedPtr<FJsonObject> ContextRoot = Spec->HasField(TEXT("combat_fx_context"))
+			? JsonObject(Spec, TEXT("combat_fx_context")) : ExplicitData;
+		const TSharedPtr<FJsonObject> ContextData = ContextRoot->HasField(TEXT("Data"))
+			? JsonObject(ContextRoot, TEXT("Data")) : ContextRoot;
+		const TSharedPtr<FJsonObject> ContextAttack = JsonObject(ContextData, TEXT("Attack"));
+		const TSharedPtr<FJsonObject> ContextHit = JsonObject(ContextData, TEXT("Hit"));
+		FString Family;
+		Spec->TryGetStringField(TEXT("family"), Family);
+		const FString Label = PackagePath + TEXT("/") + AssetName + TEXT("/") + Family;
+		const auto Classify = [&](const TCHAR* RulesKey, const TCHAR* DefaultKey, const TCHAR* OverrideKey)
+		{
+			FString Value;
+			if (FxSpec->TryGetStringField(OverrideKey, Value)) return Value;
+			FxPolicy->TryGetStringField(DefaultKey, Value);
+			const TArray<TSharedPtr<FJsonValue>>* Rules = nullptr;
+			if (FxPolicy->TryGetArrayField(RulesKey, Rules))
+			{
+				for (const TSharedPtr<FJsonValue>& RuleValue : *Rules)
+				{
+					const TSharedPtr<FJsonObject> Rule = RuleValue->AsObject();
+					for (const FString& Token : ReadStringArrayField(Rule, TEXT("contains_any")))
+					{
+						if (Label.Contains(Token)) return Rule->GetStringField(TEXT("value"));
+					}
+				}
+			}
+			return Value;
+		};
+		FString Weapon = Classify(TEXT("weapon_rules"), TEXT("default_weapon"), TEXT("weapon_category"));
+		const FString Surface = Classify(TEXT("surface_rules"), TEXT("default_surface"), TEXT("impact_surface"));
+		bool bAttackEnabled = Unit->Attack.bEnable;
+		ContextAttack->TryGetBoolField(TEXT("bEnable"), bAttackEnabled);
+		if (!bAttackEnabled) Weapon = TEXT("unarmed");
+		const TSharedPtr<FJsonObject> WeaponProfiles = JsonObject(FxPolicy, TEXT("weapon_profiles"));
+		const TSharedPtr<FJsonObject> HitProfiles = JsonObject(FxPolicy, TEXT("hit_profiles"));
+		if (!WeaponProfiles->HasField(Weapon) || !HitProfiles->HasField(Surface))
+		{
+			return MakeErrorJson(TEXT("combat_fx requires a known weapon_category and impact_surface from the style profile"));
+		}
+		const TArray<TSharedPtr<FJsonValue>>* ContextProjectiles = nullptr;
+		const bool bContextHasProjectiles = ContextAttack->TryGetArrayField(TEXT("SpawnProjectile"), ContextProjectiles);
+		bool bProjectileAttack = !Unit->Attack.SpawnProjectile.IsEmpty();
+		if (Spec->HasField(TEXT("combat_fx_context")) && bContextHasProjectiles)
+		{
+			// Direct UnitCreate has already merged data; DoAll's pending union cannot clear an array.
+			// | 普通 UnitCreate 已合并数据；DoAll 待执行的 union 空数组不会清除模板弹丸。
+			const TSharedPtr<FJsonObject> ContextOptions = ExtractMergeOptions(ContextRoot);
+			bool bReplaceContextArrays = false;
+			ContextOptions->TryGetBoolField(TEXT("replace_arrays"), bReplaceContextArrays);
+			ContextOptions->TryGetBoolField(TEXT("replace_array_values"), bReplaceContextArrays);
+			bProjectileAttack = !ContextProjectiles->IsEmpty() || (!bReplaceContextArrays && bProjectileAttack);
+		}
+		TSharedPtr<FJsonObject> FxData = MakeShared<FJsonObject>();
+		if (!ContextAttack->HasField(TEXT("SpawnFx")))
+		{
+			const TArray<TSharedPtr<FJsonValue>> Templates = bProjectileAttack ? TArray<TSharedPtr<FJsonValue>>()
+				: JsonObject(WeaponProfiles, *Weapon)->GetArrayField(TEXT("attack_fx"));
+			const TSharedPtr<FJsonObject> Offset = JsonObject(FxSpec, TEXT("muzzle_offset"));
+			TArray<const FFxConfig_Attack*> MuzzleAnchors;
+			if (Offset->Values.IsEmpty())
+			{
+				for (const FFxConfig_Attack& Existing : Unit->Attack.SpawnFx)
+				{
+					if (!Existing.bEnable || Existing.SpawnOrigin != ESpawnOrigin::AtSelf) continue;
+					const bool bDuplicateAnchor = MuzzleAnchors.ContainsByPredicate([&Existing](const FFxConfig_Attack* Anchor)
+					{
+						return Anchor->Transform.GetTranslation() == Existing.Transform.GetTranslation()
+							&& Anchor->Transform.GetRotation() == Existing.Transform.GetRotation()
+							&& Anchor->Delay == Existing.Delay
+							&& Anchor->BindToAnimIndex == Existing.BindToAnimIndex;
+					});
+					if (!bDuplicateAnchor) MuzzleAnchors.Add(&Existing);
+				}
+			}
+			TArray<TSharedPtr<FJsonValue>> Entries;
+			// Each authored hand/animation/time receives one copy of the selected style.
+			// Flash, tracer and smoke at the same anchor must not multiply that style.
+			for (int32 AnchorIndex = 0; AnchorIndex < FMath::Max(1, MuzzleAnchors.Num()); ++AnchorIndex)
+			{
+				for (const TSharedPtr<FJsonValue>& Template : Templates)
+				{
+					TSharedPtr<FJsonObject> Entry = MakeShared<FJsonObject>();
+					FJsonObject::Duplicate(Template->AsObject(), Entry);
+					const TSharedPtr<FJsonObject> Transform = JsonObject(Entry, TEXT("Transform"));
+					if (MuzzleAnchors.IsValidIndex(AnchorIndex))
+					{
+						const FFxConfig_Attack& Anchor = *MuzzleAnchors[AnchorIndex];
+						const FVector3f Point = Anchor.Transform.GetTranslation();
+						const FQuat4f Rotation = Anchor.Transform.GetRotation();
+						TSharedPtr<FJsonObject> TranslationJson = MakeShared<FJsonObject>();
+						TranslationJson->SetNumberField(TEXT("X"), Point.X);
+						TranslationJson->SetNumberField(TEXT("Y"), Point.Y);
+						TranslationJson->SetNumberField(TEXT("Z"), Point.Z);
+						TSharedPtr<FJsonObject> RotationJson = MakeShared<FJsonObject>();
+						RotationJson->SetNumberField(TEXT("X"), Rotation.X);
+						RotationJson->SetNumberField(TEXT("Y"), Rotation.Y);
+						RotationJson->SetNumberField(TEXT("Z"), Rotation.Z);
+						RotationJson->SetNumberField(TEXT("W"), Rotation.W);
+						Transform->SetObjectField(TEXT("Translation"), TranslationJson);
+						Transform->SetObjectField(TEXT("Rotation"), RotationJson);
+						Entry->SetNumberField(TEXT("Delay"), Anchor.Delay);
+						Entry->SetNumberField(TEXT("BindToAnimIndex"), Anchor.BindToAnimIndex);
+					}
+					else if (!Offset->Values.IsEmpty())
+					{
+						Transform->SetObjectField(TEXT("Translation"), Offset);
+					}
+					Entry->SetObjectField(TEXT("Transform"), Transform);
+					Entries.Add(MakeShared<FJsonValueObject>(Entry));
+				}
+			}
+			TSharedPtr<FJsonObject> FxAttack = MakeShared<FJsonObject>();
+			FxAttack->SetArrayField(TEXT("SpawnFx"), Entries);
+			FxData->SetObjectField(TEXT("Attack"), FxAttack);
+		}
+		else
+		{
+			TSharedPtr<FJsonObject> FxAttack = MakeShared<FJsonObject>();
+			FxAttack->SetField(TEXT("SpawnFx"), ContextAttack->TryGetField(TEXT("SpawnFx")));
+			FxData->SetObjectField(TEXT("Attack"), FxAttack);
+		}
+		if (!ContextHit->HasField(TEXT("SpawnFx")))
+		{
+			TSharedPtr<FJsonObject> FxHit = MakeShared<FJsonObject>();
+			FxHit->SetArrayField(TEXT("SpawnFx"), HitProfiles->GetArrayField(Surface));
+			FxData->SetObjectField(TEXT("Hit"), FxHit);
+		}
+		else
+		{
+			TSharedPtr<FJsonObject> FxHit = MakeShared<FJsonObject>();
+			FxHit->SetField(TEXT("SpawnFx"), ContextHit->TryGetField(TEXT("SpawnFx")));
+			FxData->SetObjectField(TEXT("Hit"), FxHit);
+		}
+		if (bProjectileAttack && !ContextAttack->HasField(TEXT("SpawnProjectile")))
+		{
+			const TSharedPtr<FJsonObject> Variants = JsonObject(FxPolicy, TEXT("projectile_visual_variants"));
+			FStructProperty* AttackProperty = FindFProperty<FStructProperty>(Unit->GetClass(), TEXT("Attack"));
+			const TSharedPtr<FJsonObject> AttackJson = PropertyToJsonValue(AttackProperty, &Unit->Attack, 8)->AsObject();
+			TArray<TSharedPtr<FJsonValue>> Projectiles = AttackJson->GetArrayField(TEXT("SpawnProjectile"));
+			bool bRemapped = false;
+			for (const TSharedPtr<FJsonValue>& Value : Projectiles)
+			{
+				const TSharedPtr<FJsonObject> Projectile = Value->AsObject();
+				FString SourcePath, VariantPath;
+				if (Projectile->TryGetStringField(TEXT("ProjectileConfigDataAsset"), SourcePath)
+					&& Variants->TryGetStringField(SourcePath, VariantPath))
+				{
+					Projectile->SetStringField(TEXT("ProjectileConfigDataAsset"), VariantPath);
+					bRemapped = true;
+				}
+			}
+			if (bRemapped)
+			{
+				const TSharedPtr<FJsonObject> FxAttack = JsonObject(FxData, TEXT("Attack"));
+				FxAttack->SetArrayField(TEXT("SpawnProjectile"), Projectiles);
+				FxData->SetObjectField(TEXT("Attack"), FxAttack);
+			}
+		}
+		// UnitHere consumes the embedded shared fragment, not the referenced profile.
+		// Preserve explicit authoring; remap only inherited visual projectile defaults.
+		if (!JsonObject(ContextData, TEXT("ExtraData"))->HasField(TEXT("MutableSharedFragments")))
+		{
+			const TSharedPtr<FJsonObject> Variants = JsonObject(FxPolicy, TEXT("projectile_visual_variants"));
+			for (FInstancedStruct& Fragment : Unit->ExtraData.MutableSharedFragments)
+			{
+				if (!Fragment.IsValid() || Fragment.GetScriptStruct()->GetPathName()
+					!= TEXT("/Script/MassBattleSingleTurretRuntime.MBSTMobileFireShared")) continue;
+				FObjectPropertyBase* ProjectileProperty = FindFProperty<FObjectPropertyBase>(
+					Fragment.GetScriptStruct(), TEXT("ProjectileConfig"));
+				if (!ProjectileProperty) continue;
+				void* ValuePtr = ProjectileProperty->ContainerPtrToValuePtr<void>(Fragment.GetMutableMemory());
+				UObject* Source = ProjectileProperty->GetObjectPropertyValue(ValuePtr);
+				FString VariantPath;
+				if (Source && Variants->TryGetStringField(Source->GetPathName(), VariantPath))
+				{
+					UObject* Variant = StaticLoadObject(ProjectileProperty->PropertyClass, nullptr, *VariantPath);
+					if (!Variant) return MakeErrorJson(TEXT("Combat FX embedded projectile default could not be loaded"));
+					ProjectileProperty->SetObjectPropertyValue(ValuePtr, Variant);
+				}
+			}
+		}
+		TSharedPtr<FJsonObject> FxPatch = MakeShared<FJsonObject>();
+		FxPatch->SetObjectField(TEXT("Data"), FxData);
+		TSharedPtr<FJsonObject> FxOptions = MakeShared<FJsonObject>();
+		FxOptions->SetBoolField(TEXT("replace_arrays"), true);
+		const TArray<TSharedPtr<FJsonObject>> FxPatches = BuildUnionMergePatches(Unit, FxPatch, FxOptions, MergeErrors);
+		if (!MergeErrors.IsEmpty()) return MakeErrorJson(TEXT("Combat FX style defaults contain non-mergeable fields"));
+		for (const TSharedPtr<FJsonObject>& Patch : FxPatches)
+		{
+			FPatchPreview Preview;
+			if (!ApplyPatch(NewUnit, Patch, false, Preview)) return MakeErrorJson(Preview.Error);
+			AppliedDiffs.Add(MakeShared<FJsonValueObject>(PatchPreviewToJson(Preview)));
+		}
+		FxDefaultReport->SetStringField(TEXT("weapon_category"), Weapon);
+		FxDefaultReport->SetStringField(TEXT("impact_surface"), Surface);
+		FxDefaultReport->SetBoolField(TEXT("launch_owned_by_projectile"), bProjectileAttack);
+		FxDefaultReport->SetBoolField(TEXT("explicit_attack_fx_preserved"), ContextAttack->HasField(TEXT("SpawnFx")));
+		FxDefaultReport->SetBoolField(TEXT("explicit_hit_fx_preserved"), ContextHit->HasField(TEXT("SpawnFx")));
+	}
+
 	if (bSaveAssets && !SaveAsset(NewUnit, Error))
 	{
 		return MakeErrorJson(Error);
@@ -2578,6 +2906,7 @@ FString UMassBattleUnitMCPApi::MCP_UnitCreate(const FString& CreateSpecJson, boo
 	Root->SetBoolField(TEXT("created"), true);
 	Root->SetBoolField(TEXT("saved"), bSaveAssets);
 	Root->SetArrayField(TEXT("applied_diff"), AppliedDiffs);
+	Root->SetObjectField(TEXT("combat_fx_defaults"), FxDefaultReport);
 	return ToJsonString(Root);
 }
 

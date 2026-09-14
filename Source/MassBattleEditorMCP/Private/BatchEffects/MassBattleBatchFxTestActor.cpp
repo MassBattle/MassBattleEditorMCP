@@ -882,9 +882,7 @@ void AMassBattleBatchFxTestActor::SpawnGrid(int32 SubTypeIndex, const FVector& L
 
 	FFxConfig Config;
 	Config.bEnable = true;
-	// EESubType begins with None, so its raw enum ordinal is not the renderer
-	// SubType index. Always use the MassBattle conversion helper.
-	Config.SubType = UMassBattleTagHelpers::SubTypeIndexToEnum(SubTypeIndex);
+	Config.SubType_Index = SubTypeIndex;
 	Config.StyleType = EEStyleType::Style0;
 	Config.Transform = FTransform3f::Identity;
 	Config.Transform.SetScale3D(FVector3f(EffectScale));
@@ -909,7 +907,7 @@ void AMassBattleBatchFxTestActor::SpawnGrid(int32 SubTypeIndex, const FVector& L
 				0.0);
 			const FVector WorldLocation = GetActorTransform().TransformPosition(LocalCenter + GridOffset);
 			const FTransform SpawnTransform(GetActorQuat(), WorldLocation, FVector::OneVector);
-			const FEntityHandle HostHandle = UMassBattleFuncLib::SpawnBatchedFx(this, Config, SpawnTransform);
+			const FEntityHandle HostHandle = UMassBattleFuncLib::SpawnBatchedFxWithTransform(this, Config, SpawnTransform);
 			if (HostHandle.IsSet())
 			{
 				++SetHandleCount;

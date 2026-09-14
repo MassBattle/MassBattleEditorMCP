@@ -5302,6 +5302,16 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 		}
 		UnitCreateSpec->SetStringField(TEXT("asset_name"), UnitAssetName);
 		UnitCreateSpec->SetStringField(TEXT("package_path"), UnitPackagePath);
+		// Share UnitCreate's presentation policy using the final DoAll inputs.
+		// | 复用 UnitCreate 表现策略；只传上下文，避免最终数组重复合并。
+		UnitCreateSpec->SetStringField(TEXT("style_profile"), StyleId);
+		UnitCreateSpec->SetStringField(TEXT("family"), StyleFamily);
+		UnitCreateSpec->SetObjectField(TEXT("combat_fx_context"), UnitPatch);
+		const TSharedPtr<FJsonObject>* CombatFxSpec = nullptr;
+		if (Spec->TryGetObjectField(TEXT("combat_fx"), CombatFxSpec) && CombatFxSpec && CombatFxSpec->IsValid())
+		{
+			UnitCreateSpec->SetObjectField(TEXT("combat_fx"), *CombatFxSpec);
+		}
 		Discovery->SetObjectField(TEXT("unit_create_spec"), UnitCreateSpec);
 	}
 
