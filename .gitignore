@@ -3,6 +3,9 @@
 !/.gitignore
 !/.gitattributes
 !/.gitmodules
+!/[Rr][Ee][Aa][Dd][Mm][Ee]*
+!/[Dd]oxyfile*
+!/.[Dd]oxyfile*
 !/*.uplugin
 !/Source/
 !/Config/
