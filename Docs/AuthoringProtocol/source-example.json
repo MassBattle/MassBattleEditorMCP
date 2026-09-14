@@ -1,0 +1,34 @@
+{
+  "exampleOnly": true,
+  "protocolVersion": "1.0",
+  "sourceId": "example-tank-source",
+  "revision": 1,
+  "unit": {"existingUnitRef": "<已有通用单位资产路径>"},
+  "skin": {"id": "example-tank-skin", "baseRepresentation": "Static"},
+  "nodes": [
+    {"id": "body", "parentId": null, "componentRef": "Body", "role": "Body", "localTransform": {"translationCm": [0,0,0], "rotationQuaternionXYZW": [0,0,0,1], "scale": [1,1,1]}},
+    {"id": "turret", "parentId": "body", "componentRef": "TurretPivot", "role": "TurretYawPivot", "localTransform": {"translationCm": [0,0,100], "rotationQuaternionXYZW": [0,0,0,1], "scale": [1,1,1]}},
+    {"id": "barrel", "parentId": "turret", "componentRef": "BarrelPivot", "role": "BarrelPitchPivot", "localTransform": {"translationCm": [40,0,20], "rotationQuaternionXYZW": [0,0,0,1], "scale": [1,1,1]}},
+    {"id": "muzzle", "parentId": "barrel", "componentRef": "Muzzle", "role": "Muzzle", "localTransform": {"translationCm": [150,0,0], "rotationQuaternionXYZW": [0,0,0,1], "scale": [1,1,1]}}
+  ],
+  "features": {
+    "unit.single_turret": {
+      "schemaVersion": 1,
+      "enabled": true,
+      "missingPolicy": "UseBaseRepresentation",
+      "settings": {
+        "turretNode": "turret", "barrelNode": "barrel", "muzzleNode": "muzzle",
+        "turretLocalAxis": [0,0,1], "barrelLocalAxis": [0,1,0], "barrelLocalForwardAxis": [1,0,0],
+        "yawLimitsDegrees": [-180,180], "pitchLimitsDegrees": [-15,45],
+        "yawSpeedDegreesPerSecond": 90, "pitchSpeedDegreesPerSecond": 60,
+        "mobileFireProfileRef": "<可选的既有武器策略路径>"
+      }
+    }
+  },
+  "bindings": {
+    "weapons": [{"id": "main", "baseWeaponRef": "<普通导出使用的既有武器配置>", "attachmentId": "muzzle", "missingTurretPolicy": "BindToBaseRootAtAuthoredPose"}],
+    "effects": [{"id": "main-muzzle-flash", "event": "WeaponFire", "weaponId": "main", "attachmentId": "muzzle", "effectRef": "<已验证的MassBattle枪口Burst配置>", "mode": "Burst", "timingPolicy": "SampleAtFirePreRecoil", "orientationPolicy": "MuzzleForward"}],
+    "materials": [{"id": "body-paint", "materialSlotRef": "<皮肤材质槽>", "teamColor": {"schemaVersion": 1, "maskMode": "AutoDominant", "tolerance": 0.065, "strength": 1.0, "paletteRef": "<项目公共队伍色表>", "uvPolicy": "MatchBaseColor", "algorithmVersion": "oklab-dominant-v1"}}]
+  },
+  "export": {"targetPath": "<指定生成目录>", "allowBaseFallback": true, "preserveGameplayFields": true}
+}
