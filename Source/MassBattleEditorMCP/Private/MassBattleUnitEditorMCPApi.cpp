@@ -1422,21 +1422,20 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 			DataAsset->VertexNormalTexture = CreateOrLoadTexture2DAsset(GeneratedPackagePath, FString::Printf(TEXT("VAT_%s_VertNormal%s"), *AssetSlug, *LodSuffix), OutSavePaths);
 		}
 
-		FString BakeError;
-		const bool bBakeSuccess = UMassBattleFuncLibEd::BakeMassBattleVAT(DataAsset, SampleRate, BakeError);
+		const bool bBakeSuccess = UAnimToTextureBPLibrary::AnimationToTexture(DataAsset);
 		TSharedPtr<FJsonObject> LodResult = MakeShared<FJsonObject>();
 		LodResult->SetNumberField(TEXT("lod_index"), LOD.LODIndex);
 		LodResult->SetStringField(TEXT("mode"), LOD.Mode == EVATBakeMode::BoneMode ? TEXT("BoneMode") : TEXT("VertexMode"));
 		LodResult->SetBoolField(TEXT("bake_success"), bBakeSuccess);
-		LodResult->SetStringField(TEXT("bake_helper"), TEXT("MassBattleFrame.BakeMassBattleVAT"));
+		LodResult->SetStringField(TEXT("bake_helper"), TEXT("AnimToTextureEditor.AnimationToTexture"));
 		if (!bBakeSuccess)
 		{
 			Root->SetBoolField(TEXT("success"), false);
 			Root->SetStringField(
 				TEXT("error"),
-				BakeError.IsEmpty()
-					? FString::Printf(TEXT("MassBattle VAT bake failed for LOD %d."), LOD.LODIndex)
-					: FString::Printf(TEXT("MassBattle VAT bake failed for LOD %d: %s"), LOD.LODIndex, *BakeError));
+				FString::Printf(
+					TEXT("AnimToTexture VAT bake failed for LOD %d. Check LogAnimToTextureEditor for the rejected mesh, animation, or texture setting."),
+					LOD.LODIndex));
 			LodResults.Add(MakeShared<FJsonValueObject>(LodResult));
 			Root->SetArrayField(TEXT("lod_results"), LodResults);
 			Root->SetArrayField(TEXT("warnings"), Warnings);
@@ -1459,6 +1458,7 @@ static TSharedPtr<FJsonObject> BakeVatWithMassBattleToolsFlow(
 		LodResults.Add(MakeShared<FJsonValueObject>(LodResult));
 	}
 
+	StaticMesh->UpdateUVChannelData(true);
 	DataAsset->MarkPackageDirty();
 	StaticMesh->MarkPackageDirty();
 
@@ -5315,7 +5315,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorPlanCreateVatUnit(const FString& 
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_materials"), TEXT("MCP_CreateMaterialInstanceForStaticMeshWithLODs"), ParentMaterialPath.IsEmpty() ? TEXT("blocked") : TEXT("planned"), TEXT("Create material instances for the generated static mesh LOD material slots."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("resolve_material_texture_sources"), TEXT("MCP_EditorApplyCreateVatUnit.material_overrides"), MassBattleUnitEditorMCP::HasMaterialOverrides(Spec) ? TEXT("planned") : TEXT("skipped"), TEXT("Use explicit source materials to populate VAT texture inputs while preserving generated VAT material instances."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("create_vat_data_and_textures"), TEXT("MassBattleTools.CreateDataAsset/CreateVATTextures"), TEXT("planned"), TEXT("Create or reuse AnimToTextureDataAsset and VAT Texture2D assets."));
-	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("bake_vat_textures"), TEXT("UMassBattleFuncLibEd.BakeMassBattleVAT"), TEXT("planned"), TEXT("Bake animation frames into VAT textures through the MassBattleFrame helper while preserving source model-space root transforms and refreshing the UV cache."));
+	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("bake_vat_textures"), TEXT("UAnimToTextureBPLibrary.AnimationToTexture"), TEXT("planned"), TEXT("Bake animation frames into VAT textures through the official AnimToTexture editor API while preserving source model-space root transforms and refreshing the UV cache."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("update_vat_materials"), TEXT("UAnimToTextureBPLibrary.UpdateMaterialInstanceFromDataAsset"), TEXT("planned"), TEXT("Write baked VAT and AnimData texture parameters into generated material instances."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("duplicate_renderer"), TEXT("MCP_DuplicateClassAsset"), TEXT("planned"), TEXT("Duplicate or reuse a renderer Blueprint class for the unit subtype."));
 	MassBattleUnitEditorMCP::AddStep(Steps, TEXT("set_renderer_defaults"), TEXT("MCP_SetClassDefaultProperties"), TEXT("planned"), TEXT("Set renderer CDO mesh, Niagara system, and SubType after generated assets exist."));
@@ -5553,7 +5553,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorValidateCreateVatUnit(const FStri
 
 	const bool bBakeVat = MassBattleUnitEditorMCP::BoolFieldByNamesOrDefault(Spec, { TEXT("bake_vat"), TEXT("refresh_vat_data"), TEXT("run_anim_to_texture") }, true);
 	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("create_vat_data_and_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Create or reuse AnimToTextureDataAsset and VAT Texture2D assets."));
-	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("bake_vat_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Run UMassBattleFuncLibEd::BakeMassBattleVAT for each LOD setting."));
+	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("bake_vat_textures"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Run UAnimToTextureBPLibrary::AnimationToTexture for each LOD setting."));
 	MassBattleUnitEditorMCP::AddExecutionPreview(ExecutionPreview, TEXT("update_vat_materials"), bBakeVat ? TEXT("would_run") : TEXT("skipped"), TEXT("Update VAT material instance parameters from the baked DataAsset."));
 
 	if (!RendererClassPath.IsEmpty() && MassBattleUnitEditorMCP::AssetExists(RendererClassPath))
@@ -5883,7 +5883,7 @@ FString UMassBattleUnitEditorMCPApi::MCP_EditorApplyCreateVatUnit(const FString&
 	bool bVatBakeCompleted = false;
 	if (bBakeVat)
 	{
-		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("bake_vat_textures"), TEXT("MassBattleTools.CreateVATTextures -> MassBattleFrame.BakeMassBattleVAT -> UpdateMaterialInstance"), TEXT("running"), TEXT("Baking VAT textures through the MassBattleFrame helper and updating generated material instances."));
+		TSharedPtr<FJsonObject> Step = MassBattleUnitEditorMCP::AddExecutionStep(ExecutionSteps, TEXT("bake_vat_textures"), TEXT("MassBattleTools.CreateVATTextures -> AnimToTextureEditor.AnimationToTexture -> UpdateMaterialInstance"), TEXT("running"), TEXT("Baking VAT textures through the official AnimToTexture editor API and updating generated material instances."));
 		TSharedPtr<FJsonObject> BakeResult = MassBattleUnitEditorMCP::BakeVatWithMassBattleToolsFlow(Spec, Discovery, SkeletalMeshPath, StaticMeshPath, GeneratedPackagePath, AssetSlug, VatDataAssetName, UnitPatch, GeneratedVatSavePaths);
 		Step->SetObjectField(TEXT("result"), BakeResult);
 		if (!BakeResult.IsValid() || !BakeResult->GetBoolField(TEXT("success")))

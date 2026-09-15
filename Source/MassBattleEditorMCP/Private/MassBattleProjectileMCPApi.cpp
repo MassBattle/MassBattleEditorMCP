@@ -643,7 +643,6 @@ static bool EquivalentEnabledFx(const FFxConfig_Attack& A, const FFxConfig_Attac
 		&& A.Transform.Equals(B.Transform)
 		&& A.bAttached == B.bAttached
 		&& A.SpawnOrigin == B.SpawnOrigin
-		&& A.Quantity == B.Quantity
 		&& FMath::IsNearlyEqual(A.Delay, B.Delay)
 		&& FMath::IsNearlyEqual(A.LifeSpan, B.LifeSpan)
 		&& A.BindToAnimIndex == B.BindToAnimIndex
@@ -726,11 +725,6 @@ static void ValidateLifecycleContent(
 			AddIssue(Issues, TEXT("warning"), TEXT("terminal_fx_is_attached"), *Path,
 				TEXT("Hit/removal FX is attached; terminal impact visuals are normally Burst events."));
 		}
-		if (Fx.Quantity != 1)
-		{
-			AddIssue(Issues, TEXT("warning"), TEXT("logical_fx_quantity_not_one"), *Path,
-				TEXT("Quantity multiplies logical FX events. Keep it at 1 and author particle count inside Niagara unless multiple logical instances are intentional."));
-		}
 	}
 
 	const FString AssetPackage = Asset && Asset->GetOutermost() ? Asset->GetOutermost()->GetName() : FString();
@@ -756,7 +750,7 @@ static void ValidateLifecycleContent(
 		else
 		{
 			AddIssue(Issues, TEXT("warning"), TEXT("submunition_requires_depth_review"), *Path,
-				FString::Printf(TEXT("Lifecycle content spawns %d child projectile instance(s); review recursion depth and representative load."), Child.Quantity));
+				TEXT("Lifecycle content spawns a child projectile; review recursion depth and representative load."));
 		}
 	}
 }

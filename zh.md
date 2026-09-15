@@ -14,6 +14,8 @@
 
 MassBattleEditorMCP 是免费开源项目，不同于商业插件，因此不承诺所有功能在全部 Unreal Engine 版本中兼容。基础 MCP 中少量 UE 5.8 API 差异已经在 `5.6`、`5.7` 分支完成兼容替换。当前唯一保留的版本限制是 Niagara MCP 与 Batch FX MCP：它们大量依赖 UE 5.8 的 `NiagaraEditor` 内部接口。
 
+在项目插件层面，MassBattleEditorMCP 只依赖 [Mass Battle Frame](https://github.com/MassBattle/MassBattleFrame)；其余原生依赖均由 Unreal Engine 自带。可选的 Python bridge 需要 Python 3.10 或更高版本，以及 Python `mcp` 包。本仓库按 [MIT License](LICENSE) 开源。
+
 批处理特效是客观的项目需求。如果你使用 UE 5.6 或 5.7，又有源特效需要转换为 MassBattle 批处理，不必迁移项目版本，也不必自己反复与 AI 沟通制作和迁移。可以把源特效素材、目标 Unreal Engine 版本和效果需求交给作者，联系 QQ `3440602831`，由作者直接为你的项目定制并交付批处理特效。定制费用只需足够让作者订阅 ChatGPT Pro ×20。
 
 需求表述模板：`我使用 UE 5.6，以下源特效素材需要转换为 MassBattle 批处理特效：【素材与效果要求】。请针对这个引擎版本定制并交付批处理特效。`

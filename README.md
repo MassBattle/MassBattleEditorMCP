@@ -14,6 +14,8 @@
 
 MassBattleEditorMCP is a free and open-source project, not a commercial plugin, so it does not promise that every feature will be compatible with every Unreal Engine version. The small UE 5.8 API differences in the core MCP have already been adapted on the `5.6` and `5.7` branches. The only remaining version limitation is Niagara MCP and Batch FX MCP: both depend extensively on internal UE 5.8 `NiagaraEditor` APIs.
 
+At the project-plugin level, MassBattleEditorMCP depends only on [Mass Battle Frame](https://github.com/MassBattle/MassBattleFrame). All remaining native dependencies are shipped with Unreal Engine; the optional Python bridge requires Python 3.10 or newer and the `mcp` Python package. This repository is licensed under the [MIT License](LICENSE).
+
 Batch effects are a real production requirement. If you use UE 5.6 or 5.7 and need source effects converted for MassBattle batch processing, you do not need to migrate the project or repeatedly work through the conversion with AI yourself. Send the source VFX assets, target Unreal Engine version, and effect requirements to the author via QQ `3440602831`; the author can customize and deliver the batch effects directly for your project. The customization fee only needs to be enough for the author to subscribe to ChatGPT Pro ×20.
 
 Request template: `I use UE 5.6. These source VFX assets need to be converted into MassBattle batch effects: [assets and requirements]. Please customize and deliver the batch effects for this engine version.`
