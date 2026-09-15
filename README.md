@@ -2,6 +2,20 @@
 
 [中文文档](zh.md)
 
+## Compatibility, Dependencies, and License
+
+Use the branch that matches your Unreal Engine version:
+
+| Branch | Unreal Engine | Scope |
+| --- | --- | --- |
+| `main` | 5.8 | Full MCP, including UE 5.8 Niagara graph and Batch FX authoring |
+| `5.7` | 5.7 | Core MassBattle editor MCP compatible with UE 5.7 |
+| `5.6` | 5.6 | Core MassBattle editor MCP compatible with UE 5.6 |
+
+At the project-plugin level, MassBattleEditorMCP depends only on [Mass Battle Frame](https://github.com/MassBattle/MassBattleFrame). Its remaining native dependencies are modules and plugins shipped with Unreal Engine, including Niagara and AnimToTexture; it does not depend on Winyunq or another project plugin. The optional Python bridge requires Python 3.10 or newer and the `mcp` Python package.
+
+MassBattleEditorMCP is open source under the [MIT License](LICENSE).
+
 I think RTS games are one of the best ways to reason about an AI society. Humans should not be trapped in every low-level action. Humans should define strategy, constraints, tradeoffs, and goals; AI and tools should turn those goals into executable tactical work. In the future, the scarce people will not be the ones who merely repeat implementation details. They will be the ones who can set direction, organize systems, judge outcomes, and take responsibility.
 
 That is also why RTS matters to me. An ambitious RTS should not start with a vision of massive war, then cut the unit count down to a handful because the technology cannot carry the design. Scale is not decoration. Scale changes the gameplay, the tactical space, the presentation layer, and the tools required to build the game.

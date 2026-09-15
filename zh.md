@@ -2,6 +2,20 @@
 
 [English](README.md)
 
+## 兼容版本、依赖与许可证
+
+请使用与 Unreal Engine 版本对应的分支：
+
+| 分支 | Unreal Engine | 范围 |
+| --- | --- | --- |
+| `main` | 5.8 | 完整 MCP，包括 UE 5.8 的 Niagara Graph 与 Batch FX 制作能力 |
+| `5.7` | 5.7 | 兼容 UE 5.7 的 MassBattle 核心编辑器 MCP |
+| `5.6` | 5.6 | 兼容 UE 5.6 的 MassBattle 核心编辑器 MCP |
+
+在项目插件层面，MassBattleEditorMCP 只依赖 [Mass Battle Frame](https://github.com/MassBattle/MassBattleFrame)。其余原生依赖均为 Unreal Engine 自带模块或插件，包括 Niagara 与 AnimToTexture；它不依赖 Winyunq 或其他项目插件。可选的 Python bridge 需要 Python 3.10 或更高版本，以及 Python `mcp` 包。
+
+MassBattleEditorMCP 按 [MIT License](LICENSE) 开源。
+
 我一直认为 RTS 是最适合思考 AI 社会的游戏类型：人类不应该被困在每一个低层动作里，而应该负责战略、约束、取舍和目标；AI 和工具链负责把这些目标拆成可执行的战术动作。未来真正稀缺的人，不是只会反复执行细节的人，而是能提出目标、判断方向、组织系统并承担后果的人。
 
 这也是我喜欢 RTS 的原因。一个真正有野心的 RTS 不应该因为技术不够，就把原本成千上万的单位砍成几个可控对象，最后把“大规模战争”做成一个玩具。规模本身不是装饰，它会反过来决定玩法、战术空间、表现方式和工具链。

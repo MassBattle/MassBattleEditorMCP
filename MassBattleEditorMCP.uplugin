@@ -35,6 +35,14 @@
 			"Enabled": true
 		},
 		{
+			"Name": "Niagara",
+			"Enabled": true
+		},
+		{
+			"Name": "AnimToTexture",
+			"Enabled": true
+		},
+		{
 			"Name": "StructUtils",
 			"Enabled": true
 		}

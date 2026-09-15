@@ -4,6 +4,7 @@
 !/.gitattributes
 !/.gitmodules
 !/[Rr][Ee][Aa][Dd][Mm][Ee]*
+!/LICENSE
 !/[Dd]oxyfile*
 !/.[Dd]oxyfile*
 !/zh.md
