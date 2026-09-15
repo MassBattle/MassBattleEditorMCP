@@ -89,7 +89,6 @@ Add separate `Attack.SpawnFx` entries for distinct event locations:
 SpawnOrigin       = AtSelf
 Delay             = 0 or the launch-frame delay
 bAttached         = false
-Quantity          = 1
 SubType            = matching Burst renderer
 StyleType          = launch/muzzle style
 SoftNiagaraAsset   = empty
@@ -102,14 +101,13 @@ SoftCascadeAsset   = empty
 SpawnOrigin       = AtTarget
 Delay             = TimeOfHit or matching AnimHitTime
 bAttached         = false
-Quantity          = 1
 SubType            = matching Burst renderer
 StyleType          = impact/explosion style
 SoftNiagaraAsset   = empty
 SoftCascadeAsset   = empty
 ```
 
-Use Niagara Spawn Count for sparks, fragments, smoke particles, and visual sub-elements. `FFxConfig.Quantity` multiplies logical Host/Burst instances and should normally remain `1`.
+Each `FFxConfig` array entry is one logical Host/Burst event. Use Niagara Spawn Count for sparks, fragments, smoke particles, and visual sub-elements.
 
 ## Arbitrary Source VFX Conversion
 

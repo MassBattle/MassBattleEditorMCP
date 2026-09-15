@@ -39,7 +39,6 @@ SubType != None
 bAttached = false
 SoftNiagaraAsset = empty
 SoftCascadeAsset = empty
-Quantity = 1 in the ordinary case
 ```
 
 Setting `SubType` and an ordinary Niagara/Cascade asset together can execute both batch and unbatched paths. Label that result hybrid; do not call it fully batched.
@@ -55,17 +54,17 @@ Use `Style` for per-event variants that share one graph and renderer:
 
 Use a different `SubType` only when a different Niagara system/renderer contract is required. Excessive subtypes fragment batches.
 
-## Quantity
+## Logical event count
 
-`FFxConfig.Quantity` multiplies logical Host/event instances. Particle count belongs inside Niagara.
+Each `FFxConfig` array entry represents one logical Host/event instance. Particle count belongs inside Niagara.
 
 ```text
 Correct for 40 sparks:
-    Quantity = 1
+    one FFxConfig array entry
     Niagara Spawn Count = 40
 
 Usually wrong:
-    Quantity = 40
+    40 duplicate FFxConfig array entries
     Niagara Spawn Count = 1
 ```
 

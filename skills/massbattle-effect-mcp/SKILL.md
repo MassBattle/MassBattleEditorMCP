@@ -160,7 +160,7 @@ When the source effect type is unknown:
 9. Use the available Unreal/level MCP to place one instance of the generated FX renderer Blueprint in the test level. It must exist at BeginPlay because `AMassBattleFxRenderer::BeginPlay` registers the subtype with `MassBattleSubsystem->FxRenderers`.
 10. Before and after placement, use `MCP_BatchFxReadRendererDefaults` plus actor readback to verify the Blueprint defaults and level instance. The expected Burst path has a non-null Niagara system, a non-null `NDC_BurstFx`, and the same `SubType` that unit `FFxConfig` uses.
 11. Use Unit MCP to merge a `FFxConfig` into `Hit.SpawnFx`, `Death.SpawnFx`, `Appear.SpawnFx`, `Attack.SpawnFx`, or `Select.SpawnOnSelected.SpawnFx`.
-12. For `FFxConfig`, leave unbatched assets empty and set `SubType`, `StyleType`, `bAttached`, `Quantity`, `Delay`, `LifeSpan`, and `Transform`. In the current project JSON merge path, `SubType` and `StyleType` should be strings such as `SubType35` and `Style0`.
+12. For `FFxConfig`, leave unbatched assets empty and set `SubType`, `StyleType`, `bAttached`, `Delay`, `LifeSpan`, and `Transform`. Each array entry is one logical FX event; particle multiplicity belongs in Niagara. In the current project JSON merge path, `SubType` and `StyleType` should be strings such as `SubType35` and `Style0`.
 13. Run translation comparison and paired visual validation before counting the item as converted. If the existing Mass Battle payload cannot express source timing or ownership semantics, report the missing field/adapter instead of changing the effect.
 
 ## Merge Write Shape

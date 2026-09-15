@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "MassAPIStructs.h"
 #include "MassBattleArmyVFXDemoActor.generated.h"
 
 class UCameraComponent;
@@ -27,7 +26,6 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-	virtual void Tick(float DeltaSeconds) override;
 
 	/** Warm all renderer systems below the stage before the first visible pass. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ArmyVFX Batch Demo")
@@ -90,20 +88,10 @@ protected:
 	TArray<TObjectPtr<UTextRenderComponent>> EffectLabels;
 
 private:
-	struct FMovingBatchFx
-	{
-		FEntityHandle Host;
-		FVector Center = FVector::ZeroVector;
-		float Radius = 300.0f;
-		float LinearSpeed = 0.0f;
-		float PhaseOffset = 0.0f;
-	};
-
 	void WarmUpAllRenderers();
-	void DestroyWarmupEffects();
 	void TriggerAllInternal(bool bWarmup);
 	void TriggerSpec(int32 SpecIndex, const FVector& WorldLocation, bool bWarmup);
-	FEntityHandle SpawnRecipeStep(
+	void SpawnRecipeStep(
 		int32 SpecIndex,
 		bool bAttached,
 		int32 StyleIndex,
@@ -111,20 +99,11 @@ private:
 		float LifeSpan,
 		const FVector& WorldLocation,
 		bool bWarmup);
-	void CleanupVisibleEffects();
-	void CleanupHosts(TArray<FEntityHandle>& Hosts);
-	void UpdateMovingEffects(float DeltaSeconds);
 	void UpdateStatusText();
 	FVector GetGridLocation(int32 SpecIndex) const;
 	void LogAcceptanceDiagnosticsAt(float SecondsAfterTrigger);
 
-	TArray<FEntityHandle> ActiveVisibleHosts;
-	TArray<FEntityHandle> ActiveWarmupHosts;
-	TArray<FMovingBatchFx> MovingEffects;
-	float MovementTime = 0.0f;
-
 	FTimerHandle WarmupTimer;
-	FTimerHandle WarmupCleanupTimer;
 	FTimerHandle InitialTriggerTimer;
 	FTimerHandle ReplayTimer;
 };

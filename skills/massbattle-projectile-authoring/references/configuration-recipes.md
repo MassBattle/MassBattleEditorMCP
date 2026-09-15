@@ -79,7 +79,6 @@ Unit:
 
 ```text
 Attack.TimeOfHitAction = None
-SpawnProjectile.Quantity = 1
 SpawnProjectile.Delay = launch frame
 ```
 
@@ -113,7 +112,7 @@ Use a persistent Attached visual. If the beam is truly instantaneous and damage 
 - [ ] DataAsset path is valid;
 - [ ] local muzzle transform is correct;
 - [ ] launch delay matches animation;
-- [ ] quantity is 1;
+- [ ] there is one projectile entry per logical shot;
 - [ ] launch Burst uses same timing.
 
 ### DataAsset layer

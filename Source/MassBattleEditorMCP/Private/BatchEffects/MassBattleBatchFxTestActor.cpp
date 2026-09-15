@@ -343,13 +343,15 @@ namespace
 			return false;
 		}
 
+		FMBMoveFailCondition FailConditions;
+		FailConditions.StuckTimeLimit = 0.0f;
+		FailConditions.StuckVelocityThreshold = 0.0f;
 		TestActor->AcceptanceAttackTask = UMassBattleBPTaskAgentsChaseAttack::AgentsChaseAttack(
 			TestActor,
 			Attackers,
 			ClosestTarget->Entity,
 			false,
-			0.0f,
-			0.0f,
+			FailConditions,
 			FAgentTaskVisualizationConfig());
 		if (!TestActor->AcceptanceAttackTask)
 		{
@@ -531,13 +533,15 @@ namespace
 			return false;
 		}
 
+		FMBMoveFailCondition FailConditions;
+		FailConditions.StuckTimeLimit = 0.0f;
+		FailConditions.StuckVelocityThreshold = 0.0f;
 		TestActor->AcceptanceAttackTask = UMassBattleBPTaskAgentsChaseAttack::AgentsChaseAttack(
 			TestActor,
 			Attackers,
 			ClosestTarget->Entity,
 			false,
-			0.0f,
-			0.0f,
+			FailConditions,
 			FAgentTaskVisualizationConfig());
 		if (!TestActor->AcceptanceAttackTask)
 		{
@@ -887,7 +891,6 @@ void AMassBattleBatchFxTestActor::SpawnGrid(int32 SubTypeIndex, const FVector& L
 	Config.Transform = FTransform3f::Identity;
 	Config.Transform.SetScale3D(FVector3f(EffectScale));
 	Config.bAttached = false;
-	Config.Quantity = 1;
 	Config.Delay = 0.0f;
 	Config.LifeSpan = LifeSpan;
 	Config.bDespawnWhenNoParent = true;
@@ -895,8 +898,6 @@ void AMassBattleBatchFxTestActor::SpawnGrid(int32 SubTypeIndex, const FVector& L
 	const int32 Side = FMath::Clamp(GridSide, 1, 4);
 	const float HalfSpan = 0.5f * static_cast<float>(Side - 1) * GridSpacing;
 	int32 SpawnedCount = 0;
-	int32 SetHandleCount = 0;
-	TSet<FEntityHandle> UniqueHandles;
 	for (int32 Row = 0; Row < Side; ++Row)
 	{
 		for (int32 Column = 0; Column < Side; ++Column)
@@ -906,13 +907,7 @@ void AMassBattleBatchFxTestActor::SpawnGrid(int32 SubTypeIndex, const FVector& L
 				static_cast<float>(Column) * GridSpacing - HalfSpan,
 				0.0);
 			const FVector WorldLocation = GetActorTransform().TransformPosition(LocalCenter + GridOffset);
-			const FTransform SpawnTransform(GetActorQuat(), WorldLocation, FVector::OneVector);
-			const FEntityHandle HostHandle = UMassBattleFuncLib::SpawnBatchedFxWithTransform(this, Config, SpawnTransform);
-			if (HostHandle.IsSet())
-			{
-				++SetHandleCount;
-				UniqueHandles.Add(HostHandle);
-			}
+			UMassBattleFuncLib::SpawnBatchedFx(this, Config, WorldLocation, GetActorRotation());
 			++SpawnedCount;
 		}
 	}
@@ -920,12 +915,10 @@ void AMassBattleBatchFxTestActor::SpawnGrid(int32 SubTypeIndex, const FVector& L
 	UE_LOG(
 		LogMassBattleEditorMCP,
 		Display,
-		TEXT("[ArmyVFXBatchTest] Triggered %s: SubType=%d, Events=%d, SetHostHandles=%d, UniqueHostHandles=%d"),
+		TEXT("[ArmyVFXBatchTest] Triggered %s: SubType=%d, Events=%d"),
 		Label,
 		SubTypeIndex,
-		SpawnedCount,
-		SetHandleCount,
-		UniqueHandles.Num());
+		SpawnedCount);
 	if (GEngine)
 	{
 		GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Cyan, FString::Printf(TEXT("%s SubType %d: %d NDC events"), Label, SubTypeIndex, SpawnedCount));

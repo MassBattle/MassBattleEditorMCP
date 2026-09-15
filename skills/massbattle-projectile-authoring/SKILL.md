@@ -171,7 +171,6 @@ bEnable                    = true
 ProjectileConfigDataAsset  = selected projectile asset
 SpawnOrigin                = AtSelf
 Transform                  = muzzle local transform
-Quantity                   = 1
 Delay                      = launch moment from attack start
 BindToAnimIndex            = -1 or matching attack animation
 Multipliers                = per-unit variation only
@@ -228,12 +227,11 @@ Attack.SpawnProjectile[0]
     ProjectileConfigDataAsset = DA_Projectile_Missile
     SpawnOrigin = AtSelf
     Transform = muzzle local offset/rotation
-    Quantity = 1
     Delay = launch frame from attack start
     BindToAnimIndex = matching animation or -1
 
 Attack.SpawnFx[launch]
-    Burst, AtSelf, Quantity=1
+    Burst, AtSelf
 ```
 
 ### Projectile DataAsset
@@ -281,13 +279,12 @@ OnBirth
     SpawnOrigin = AtSelf
     LifeSpan = -1
     bDespawnWhenNoParent = true
-    Quantity = 1
 
 OnHit
     optional contact Burst only
 
 OnRemoval
-    explosion Burst, Quantity=1
+    explosion Burst
     explosion sound
 ```
 
@@ -299,7 +296,7 @@ The full recipe is in [configuration recipes](references/configuration-recipes.m
 
 1. One gameplay missile normally equals one pooled Mass projectile Entity, not one Niagara Component.
 2. Flight visuals use one Attached logical instance; launch/impact/explosion use one Burst event each.
-3. Keep FX `Quantity=1`; emit particles inside Niagara.
+3. Keep one FX lifecycle entry per logical event; emit particle multiplicity inside Niagara.
 4. Never run authoritative movement/collision in Niagara.
 5. Use `bTraceOnlyOnArrival=true` only when mid-flight collision is intentionally irrelevant; it is inappropriate for interceptable/homing missiles that must hit obstacles or units en route.
 6. Keep collision radius and query as narrow as the design permits.

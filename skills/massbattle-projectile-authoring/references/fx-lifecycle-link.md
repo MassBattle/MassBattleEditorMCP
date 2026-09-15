@@ -20,7 +20,6 @@ Author through the attacker's `Attack.SpawnFx`:
 Burst
 SpawnOrigin = AtSelf
 Delay = same launch time as SpawnProjectile.Delay
-Quantity = 1
 ```
 
 Use `$massbattle-instant-damage-fx` to convert the source muzzle/cast/launch VFX and verify the Burst renderer contract.
@@ -33,7 +32,6 @@ Author through `ProjectileSpawn.OnBirth.SpawnFx`:
 bEnable = true
 bAttached = true
 SpawnOrigin = AtSelf
-Quantity = 1
 LifeSpan = -1 for parent-controlled duration
 bDespawnWhenNoParent = true
 SubType = Attached flight renderer

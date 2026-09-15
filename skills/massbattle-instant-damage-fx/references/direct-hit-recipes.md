@@ -18,7 +18,6 @@ A trail that persists through the swing is not a one-shot hit event; handle it a
 TimeOfHitAction = ApplyDMG
 launch/muzzle Burst = AtSelf, Delay=0
 impact Burst = AtTarget, Delay=TimeOfHit
-Quantity = 1 for each logical event
 ```
 
 A tracer can be visual-only, but if it needs actual travel/collision authority, route to projectile authoring.
@@ -45,7 +44,7 @@ Damage = radial gameplay configuration
 ## Failure patterns
 
 - setting `Delay=0` for a target impact and expecting it to wait until `TimeOfHit`;
-- using `Quantity` as particle count;
+- duplicating logical `FFxConfig` entries to control particle count;
 - leaving `SoftNiagaraAsset` populated in a supposedly pure batch entry;
 - using Niagara collision to determine gameplay hit;
 - creating a projectile solely to play a flash that has no travel semantics;

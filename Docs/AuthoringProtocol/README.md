@@ -24,7 +24,7 @@
 | 产能 | RegisterCapacity、SetCapacityLaneCount；自动注册当前按类型取默认值 | 插件自己的持久生产配置及注册读取入口；不能只增加界面字段 |
 | 科研/生产公共执行 | 现有共享任务、提交、同步、状态通知 | 消除编译依赖时继续复用它，不复制队列和执行器 |
 
-两框架最新核查点：普通版 48c0106、Net 0db13d5；当前 MCP b3a38c2。普通版 Actor 相关11文件与历史5.6/5.7/5.8成功构建包相同；Net缺少该组Actor代码及MCP所调用的BakeMassBattleVAT。当前MCP无条件依赖MassCore并调用5.8的SkeletalMesh::Clear()，尚不能宣称六种组合兼容。
+两框架最新核查点：普通版 48c0106、Net 0db13d5；当前 MCP b3a38c2。普通版 Actor 相关11文件与历史5.6/5.7/5.8成功构建包相同；MCP 的 VAT 工作流直接调用 AnimToTextureEditor，不要求 Net Frame 提供额外烘焙包装。当前MCP无条件依赖MassCore并调用5.8的SkeletalMesh::Clear()，尚不能宣称六种组合兼容。
 
 ## 3. 职责和目录
 

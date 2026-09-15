@@ -10,7 +10,6 @@
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
-#include "MassAPISubsystem.h"
 #include "MassBattleEditorMCP.h"
 #include "NiagaraComponent.h"
 #include "NiagaraEmitterInstance.h"
@@ -110,8 +109,7 @@ FVector GridLocalLocation(int32 SpecIndex, float ColumnSpacing, float RowSpacing
 
 AMassBattleArmyVFXDemoActor::AMassBattleArmyVFXDemoActor()
 {
-	PrimaryActorTick.bCanEverTick = true;
-	PrimaryActorTick.bStartWithTickEnabled = true;
+	PrimaryActorTick.bCanEverTick = false;
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
@@ -223,40 +221,18 @@ void AMassBattleArmyVFXDemoActor::BeginPlay()
 void AMassBattleArmyVFXDemoActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	GetWorldTimerManager().ClearAllTimersForObject(this);
-	CleanupVisibleEffects();
-	CleanupHosts(ActiveWarmupHosts);
 	Super::EndPlay(EndPlayReason);
-}
-
-void AMassBattleArmyVFXDemoActor::Tick(float DeltaSeconds)
-{
-	Super::Tick(DeltaSeconds);
-	UpdateMovingEffects(DeltaSeconds);
 }
 
 void AMassBattleArmyVFXDemoActor::WarmUpAllRenderers()
 {
-	CleanupHosts(ActiveWarmupHosts);
 	TriggerAllInternal(true);
-	GetWorldTimerManager().SetTimer(
-		WarmupCleanupTimer,
-		this,
-		&AMassBattleArmyVFXDemoActor::DestroyWarmupEffects,
-		1.5f,
-		false);
 	UE_LOG(LogMassBattleEditorMCP, Display,
 		TEXT("[ArmyVFXFaithfulBatch] Warm-up requested for all 27 placed renderers below the stage."));
 }
 
-void AMassBattleArmyVFXDemoActor::DestroyWarmupEffects()
-{
-	CleanupHosts(ActiveWarmupHosts);
-}
-
 void AMassBattleArmyVFXDemoActor::TriggerAllBatchEffects()
 {
-	CleanupVisibleEffects();
-	MovementTime = 0.0f;
 	TriggerAllInternal(false);
 	UpdateStatusText();
 
@@ -284,8 +260,6 @@ void AMassBattleArmyVFXDemoActor::TriggerAllBatchEffects()
 
 void AMassBattleArmyVFXDemoActor::TriggerCurrentEffect()
 {
-	CleanupVisibleEffects();
-	MovementTime = 0.0f;
 	CurrentEffectIndex = FMath::Clamp(CurrentEffectIndex, 0, ArmyVFXDemoCount - 1);
 	TriggerSpec(CurrentEffectIndex, GetGridLocation(CurrentEffectIndex), false);
 	UpdateStatusText();
@@ -335,7 +309,7 @@ void AMassBattleArmyVFXDemoActor::TriggerSpec(int32 SpecIndex, const FVector& Wo
 	for (int32 StepIndex = 0; StepIndex < Spec.StepCount; ++StepIndex)
 	{
 		const FArmyVFXRecipeStep& Step = Spec.Steps[StepIndex];
-		const FEntityHandle Host = SpawnRecipeStep(
+		SpawnRecipeStep(
 			SpecIndex,
 			Step.bAttached,
 			Step.Style,
@@ -343,20 +317,10 @@ void AMassBattleArmyVFXDemoActor::TriggerSpec(int32 SpecIndex, const FVector& Wo
 			Step.LifeSpan,
 			WorldLocation,
 			bWarmup);
-
-		if (!bWarmup && Step.bAttached && Spec.MovementSpeed > 0.0f && Host.IsSet())
-		{
-			FMovingBatchFx& Moving = MovingEffects.AddDefaulted_GetRef();
-			Moving.Host = Host;
-			Moving.Center = WorldLocation;
-			Moving.Radius = Spec.MovementSpeed >= 5000.0f ? 350.0f : 300.0f;
-			Moving.LinearSpeed = Spec.MovementSpeed;
-			Moving.PhaseOffset = static_cast<float>(SpecIndex) * 0.73f;
-		}
 	}
 }
 
-FEntityHandle AMassBattleArmyVFXDemoActor::SpawnRecipeStep(
+void AMassBattleArmyVFXDemoActor::SpawnRecipeStep(
 	int32 SpecIndex,
 	bool bAttached,
 	int32 StyleIndex,
@@ -372,7 +336,7 @@ FEntityHandle AMassBattleArmyVFXDemoActor::SpawnRecipeStep(
 		UE_LOG(LogMassBattleEditorMCP, Error,
 			TEXT("[ArmyVFXFaithfulBatch] Missing placed renderer: index=%d name=%s subtype=%d class=%s."),
 			SpecIndex + 1, Spec.Name, Spec.SubType, Spec.RendererClass);
-		return FEntityHandle();
+		return;
 	}
 
 	FFxConfig Config;
@@ -386,80 +350,11 @@ FEntityHandle AMassBattleArmyVFXDemoActor::SpawnRecipeStep(
 	Config.Transform = FTransform3f::Identity;
 	Config.Transform.SetScale3D(FVector3f(Spec.Scale * PreviewScaleMultiplier));
 	Config.bAttached = bAttached;
-	Config.Quantity = 1;
 	Config.Delay = bWarmup ? 0.0f : Delay;
 	Config.LifeSpan = bWarmup ? 1.0f : LifeSpan;
 	Config.bDespawnWhenNoParent = false;
 
-	const FTransform SpawnTransform(FRotator::ZeroRotator, WorldLocation, FVector::OneVector);
-	const FEntityHandle Host = UMassBattleFuncLib::SpawnBatchedFxWithTransform(this, Config, SpawnTransform);
-	if (!Host.IsSet())
-	{
-		UE_LOG(LogMassBattleEditorMCP, Error,
-			TEXT("[ArmyVFXFaithfulBatch] SpawnBatchedFx returned an invalid handle: index=%d name=%s subtype=%d channel=%s style=%d."),
-			SpecIndex + 1, Spec.Name, Spec.SubType, bAttached ? TEXT("Attached") : TEXT("Burst"), StyleIndex);
-		return Host;
-	}
-
-	(bWarmup ? ActiveWarmupHosts : ActiveVisibleHosts).Add(Host);
-	return Host;
-}
-
-void AMassBattleArmyVFXDemoActor::CleanupVisibleEffects()
-{
-	CleanupHosts(ActiveVisibleHosts);
-	MovingEffects.Reset();
-}
-
-void AMassBattleArmyVFXDemoActor::CleanupHosts(TArray<FEntityHandle>& Hosts)
-{
-	for (const FEntityHandle& Host : Hosts)
-	{
-		if (Host.IsSet())
-		{
-			UMassBattleFuncLib::DestroyBatchedFx(this, Host);
-		}
-	}
-	Hosts.Reset();
-}
-
-void AMassBattleArmyVFXDemoActor::UpdateMovingEffects(float DeltaSeconds)
-{
-	if (MovingEffects.IsEmpty())
-	{
-		return;
-	}
-
-	MovementTime += DeltaSeconds;
-	UMassAPISubsystem* MassAPI = UMassAPISubsystem::GetPtr(this);
-	if (!MassAPI)
-	{
-		return;
-	}
-
-	for (const FMovingBatchFx& Moving : MovingEffects)
-	{
-		if (!MassAPI->IsValid(Moving.Host) || !MassAPI->HasFragment<FFxConfig_Final>(Moving.Host))
-		{
-			continue;
-		}
-
-		const FFxConfig_Final& HostConfig = MassAPI->GetFragment<FFxConfig_Final>(Moving.Host);
-		if (!HostConfig.bSpawned || !MassAPI->IsValid(HostConfig.PairedFxEntity))
-		{
-			continue;
-		}
-
-		const float AngularSpeed = Moving.LinearSpeed / FMath::Max(Moving.Radius, 1.0f);
-		const float Angle = Moving.PhaseOffset + MovementTime * AngularSpeed;
-		const FVector Location = Moving.Center + FVector(
-			Moving.Radius * FMath::Cos(Angle),
-			Moving.Radius * FMath::Sin(Angle),
-			0.0f);
-		const FVector Tangent(-FMath::Sin(Angle), FMath::Cos(Angle), 0.0f);
-		UMassBattleFuncLib::SetAgentLocation(this, HostConfig.PairedFxEntity, Location);
-		UMassBattleFuncLib::SetAgentRotation(this, HostConfig.PairedFxEntity, Tangent.Rotation());
-	}
+	UMassBattleFuncLib::SpawnBatchedFx(this, Config, WorldLocation, FRotator::ZeroRotator);
 }
 
 FVector AMassBattleArmyVFXDemoActor::GetGridLocation(int32 SpecIndex) const

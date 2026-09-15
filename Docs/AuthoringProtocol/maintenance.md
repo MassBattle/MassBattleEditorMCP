@@ -47,7 +47,7 @@ SourceActor的revision与导出报告绑定；报告记录MCP版本、提供者�
 | 游戏打包时不带MCP | 普通生成资产可运行；带炮塔产物仅声明相应运行时依赖 |
 | 版本矩阵 | UE5.6/5.7/5.8 × 普通版/Net独立编译、导出、运行；不是共用同一DLL |
 
-当前已验证的历史代码不代替新模块的矩阵。Net缺失BakeMassBattleVAT、5.8专属Clear/MassCore依赖先纳入兼容清单。MassBattleFrame源码只读，涉及补齐框架公共能力时单独说明并取得授权。
+当前已验证的历史代码不代替新模块的矩阵。VAT 烘焙直接绑定 AnimToTextureEditor；5.8专属Clear/MassCore依赖仍需纳入兼容清单。MassBattleFrame源码只读，MCP 不以补齐无关框架包装来解决自身适配问题。
 
 ## 本轮完成定义
 

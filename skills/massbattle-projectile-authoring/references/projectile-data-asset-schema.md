@@ -98,7 +98,6 @@ Multipliers
 Transform
 bAttached
 SpawnOrigin
-Quantity
 Delay
 BindToAnimIndex
 InheritFromInstigator
