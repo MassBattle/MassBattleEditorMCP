@@ -76,6 +76,78 @@
           "Translation": {
             "Text": "Export Root"
           }
+        },
+        {
+          "Key": "MassBattleUnitSource:ApplyTeamColor",
+          "Source": {
+            "Text": "Apply Team Color"
+          },
+          "Translation": {
+            "Text": "Apply Team Color"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:ShowOriginalColor",
+          "Source": {
+            "Text": "Show Original Color"
+          },
+          "Translation": {
+            "Text": "Show Original Color"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:PreviewTeamIndex",
+          "Source": {
+            "Text": "Preview Team Index"
+          },
+          "Translation": {
+            "Text": "Preview Team Index"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamMaterial",
+          "Source": {
+            "Text": "Team Material"
+          },
+          "Translation": {
+            "Text": "Team Material"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamMask",
+          "Source": {
+            "Text": "Team Mask"
+          },
+          "Translation": {
+            "Text": "Team Mask"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamPalette",
+          "Source": {
+            "Text": "Team Palette"
+          },
+          "Translation": {
+            "Text": "Team Palette"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamTintStrength",
+          "Source": {
+            "Text": "Team Tint Strength"
+          },
+          "Translation": {
+            "Text": "Team Tint Strength"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:bPreviewTeamColor",
+          "Source": {
+            "Text": "Preview Team Color"
+          },
+          "Translation": {
+            "Text": "Preview Team Color"
+          }
         }
       ]
     },
@@ -112,6 +184,15 @@
           },
           "Translation": {
             "Text": "Update / Destroy"
+          }
+        },
+        {
+          "Key": "DestroyUnitConfirmation",
+          "Source": {
+            "Text": "Destroying this unit and generating it again later may lose some data. Are you sure you want to destroy the unit? (Deleting this source asset can also show this prompt.)"
+          },
+          "Translation": {
+            "Text": "Destroying this unit and generating it again later may lose some data. Are you sure you want to destroy the unit? (Deleting this source asset can also show this prompt.)"
           }
         }
       ]

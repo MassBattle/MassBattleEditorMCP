@@ -92,6 +92,94 @@
               "Path": "MassBattleUnitSource"
             }
           ]
+        },
+        {
+          "Source": {
+            "Text": "Apply Team Color"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:ApplyTeamColor",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Show Original Color"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:ShowOriginalColor",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Preview Team Index"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:PreviewTeamIndex",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Team Material"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:TeamMaterial",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Team Mask"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:TeamMask",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Team Palette"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:TeamPalette",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Team Tint Strength"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:TeamTintStrength",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Preview Team Color"
+          },
+          "Keys": [
+            {
+              "Key": "MassBattleUnitSource:bPreviewTeamColor",
+              "Path": "MassBattleUnitSource"
+            }
+          ]
         }
       ]
     },
@@ -133,6 +221,17 @@
             {
               "Key": "Actions",
               "Path": "MassBattleUnitSource"
+            }
+          ]
+        },
+        {
+          "Source": {
+            "Text": "Destroying this unit and generating it again later may lose some data. Are you sure you want to destroy the unit? (Deleting this source asset can also show this prompt.)"
+          },
+          "Keys": [
+            {
+              "Key": "DestroyUnitConfirmation",
+              "Path": "MassBattleUnitSource.cpp"
             }
           ]
         }

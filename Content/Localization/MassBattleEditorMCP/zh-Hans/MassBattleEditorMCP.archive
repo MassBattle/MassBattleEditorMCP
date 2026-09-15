@@ -20,7 +20,7 @@
             "Text": "Destroy"
           },
           "Translation": {
-            "Text": "删除"
+            "Text": "销毁单位"
           }
         },
         {
@@ -76,6 +76,78 @@
           "Translation": {
             "Text": "默认导出目录"
           }
+        },
+        {
+          "Key": "MassBattleUnitSource:ApplyTeamColor",
+          "Source": {
+            "Text": "Apply Team Color"
+          },
+          "Translation": {
+            "Text": "应用队伍颜色"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:ShowOriginalColor",
+          "Source": {
+            "Text": "Show Original Color"
+          },
+          "Translation": {
+            "Text": "显示原始颜色"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:PreviewTeamIndex",
+          "Source": {
+            "Text": "Preview Team Index"
+          },
+          "Translation": {
+            "Text": "预览队伍编号"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamMaterial",
+          "Source": {
+            "Text": "Team Material"
+          },
+          "Translation": {
+            "Text": "队伍色材质"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamMask",
+          "Source": {
+            "Text": "Team Mask"
+          },
+          "Translation": {
+            "Text": "队伍色遮罩"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamPalette",
+          "Source": {
+            "Text": "Team Palette"
+          },
+          "Translation": {
+            "Text": "队伍色表"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:TeamTintStrength",
+          "Source": {
+            "Text": "Team Tint Strength"
+          },
+          "Translation": {
+            "Text": "染色强度"
+          }
+        },
+        {
+          "Key": "MassBattleUnitSource:bPreviewTeamColor",
+          "Source": {
+            "Text": "Preview Team Color"
+          },
+          "Translation": {
+            "Text": "预览队伍颜色"
+          }
         }
       ]
     },
@@ -112,6 +184,15 @@
           },
           "Translation": {
             "Text": "更新 / 删除"
+          }
+        },
+        {
+          "Key": "DestroyUnitConfirmation",
+          "Source": {
+            "Text": "Destroying this unit and generating it again later may lose some data. Are you sure you want to destroy the unit? (Deleting this source asset can also show this prompt.)"
+          },
+          "Translation": {
+            "Text": "销毁此单位，之后再生成，可能使得某些数据丢失。确定要销毁单位吗？（删除本资产也可以触发此询问）"
           }
         }
       ]

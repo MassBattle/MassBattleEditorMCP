@@ -21,6 +21,7 @@ class MASSBATTLEEDITORMCP_API UMassBattleUnitMCPApi : public UBlueprintFunctionL
 public:
 	/** Shared implementation for the source Actor's Update action; no new MCP command. */
 	static FString UpdateSource(class AMassBattleUnitSource* Source, bool bSaveAssets);
+	static FString DestroySourceUnit(class AMassBattleUnitSource* Source);
 
 	/** List MassBattle unit DataAssets with compact balance-oriented summaries. */
 	UFUNCTION(BlueprintCallable, Category = "MassBattleEditorMCP|Unit")

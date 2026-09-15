@@ -69,15 +69,15 @@ else:
     guard.set_editor_property('UnitReference', source.get_editor_property('exported_unit'))
     unreal.EditorAssetLibrary.save_loaded_asset(guard_bp, only_if_is_dirty=False)
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([ROOT], True)
-    plan = result(API.mcp_unit_delete(SOURCE, '{"mode":"hard","dry_run":true}'))
+    plan = result(API.mcp_unit_delete(SOURCE, '{"mode":"hard","dry_run":true,"delete_exported_unit":true}'))
     assert not plan['applicable'], plan
     guard.set_editor_property('UnitReference', None)
     unreal.EditorAssetLibrary.save_loaded_asset(guard_bp, only_if_is_dirty=False)
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([ROOT], True)
     del guard, guard_bp
-    result(API.mcp_unit_delete(guard_path, '{"mode":"hard","dry_run":false}'))
+    result(API.mcp_unit_delete(guard_path, '{"mode":"hard","dry_run":false,"delete_exported_unit":true}'))
     del source, bp
-    deleted = result(API.mcp_unit_delete(SOURCE, '{"mode":"hard","dry_run":false}'))
+    deleted = result(API.mcp_unit_delete(SOURCE, '{"mode":"hard","dry_run":false,"delete_exported_unit":true}'))
     assert deleted['deleted_count'] == 2, deleted
     assert not unreal.EditorAssetLibrary.does_asset_exist(SOURCE)
     assert not unreal.EditorAssetLibrary.does_asset_exist(MOVED)

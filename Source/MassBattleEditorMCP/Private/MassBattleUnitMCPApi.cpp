@@ -2011,6 +2011,8 @@ static bool ApplyDeletePlan(const TSharedPtr<FJsonObject>& Plan, const FString& 
 	Plan->TryGetStringField(TEXT("target_path"), TargetPath);
 	Plan->TryGetStringField(TEXT("delete_mode"), DeleteMode);
 	Plan->TryGetBoolField(TEXT("force"), bForce);
+	bool bDeleteExported = false;
+	Plan->TryGetBoolField(TEXT("delete_exported_unit"), bDeleteExported);
 
 	UMassBattleAgentConfigDataAsset* Unit = LoadUnit(TargetPath, OutError);
 	if (!Unit)
@@ -2020,8 +2022,8 @@ static bool ApplyDeletePlan(const TSharedPtr<FJsonObject>& Plan, const FString& 
 
 	AMassBattleUnitSource* Source = Unit->GetTypedOuter<AMassBattleUnitSource>();
 	UObject* DeleteTarget = Source ? Source->GetSourceAsset() : Unit;
-	TArray<TSharedPtr<FJsonValue>> Referencers = BuildReferencerJson(DeleteTarget, Source ? Source->ExportedUnit.Get() : nullptr);
-	if (Source) Referencers.Append(BuildReferencerJson(Source->ExportedUnit, DeleteTarget));
+	TArray<TSharedPtr<FJsonValue>> Referencers = BuildReferencerJson(DeleteTarget, Source && bDeleteExported ? Source->ExportedUnit.Get() : nullptr);
+	if (Source && bDeleteExported) Referencers.Append(BuildReferencerJson(Source->ExportedUnit, DeleteTarget));
 	if (DeleteMode == TEXT("hard") && !bForce && !Referencers.IsEmpty())
 	{
 		OutError = TEXT("Deletion blocked: assets have external referencers. Refresh the delete plan.");
@@ -2043,7 +2045,7 @@ static bool ApplyDeletePlan(const TSharedPtr<FJsonObject>& Plan, const FString& 
 	if (DeleteMode == TEXT("hard"))
 	{
 		TArray<UObject*> ObjectsToDelete = { DeleteTarget };
-		if (Source && Source->ExportedUnit) ObjectsToDelete.Add(Source->ExportedUnit);
+		if (Source && bDeleteExported && Source->ExportedUnit) ObjectsToDelete.Add(Source->ExportedUnit);
 		int32 DeletedCount = 0;
 		if (bForce)
 		{
@@ -2054,7 +2056,7 @@ static bool ApplyDeletePlan(const TSharedPtr<FJsonObject>& Plan, const FString& 
 			DeletedCount = ObjectTools::DeleteObjects(ObjectsToDelete, false);
 		}
 
-		const bool bDeleted = DeletedCount == ObjectsToDelete.Num();
+		const bool bDeleted = DeletedCount >= ObjectsToDelete.Num();
 		OutRoot->SetBoolField(TEXT("deleted"), bDeleted);
 		OutRoot->SetBoolField(TEXT("moved"), false);
 		OutRoot->SetNumberField(TEXT("deleted_count"), DeletedCount);
@@ -2081,7 +2083,7 @@ static bool ApplyDeletePlan(const TSharedPtr<FJsonObject>& Plan, const FString& 
 	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
 	TArray<FAssetRenameData> RenameData;
 	RenameData.Emplace(DeleteTarget, TrashPackagePath, TrashAssetName);
-	if (Source && Source->ExportedUnit) RenameData.Emplace(Source->ExportedUnit, TrashPackagePath / TEXT("Generated"), Source->ExportedUnit->GetName());
+	if (Source && bDeleteExported && Source->ExportedUnit) RenameData.Emplace(Source->ExportedUnit, TrashPackagePath / TEXT("Generated"), Source->ExportedUnit->GetName());
 	const bool bMoved = AssetTools.RenameAssets(RenameData);
 	if (!bMoved)
 	{
@@ -2208,6 +2210,36 @@ static void AddObjectClassFilter(FARFilter& Filter, UClass* Class)
 } // namespace MassBattleUnitMCP
 
 using namespace MassBattleUnitMCP;
+
+FString UMassBattleUnitMCPApi::DestroySourceUnit(AMassBattleUnitSource* Source)
+{
+	if (!Source || !Source->GetSourceAsset() || !Source->ExportedUnit)
+		return MakeErrorJson(TEXT("Source has no exported unit."));
+	Source = AMassBattleUnitSource::Resolve(Source->GetSourceAsset());
+	UMassBattleAgentConfigDataAsset* Exported = Source->ExportedUnit;
+	if (!BuildReferencerJson(Exported, Source->GetSourceAsset()).IsEmpty())
+		return MakeErrorJson(TEXT("Deletion blocked: exported unit has external referencers."));
+	const FString UnitPath = Exported->GetPathName();
+	Source->Modify();
+	Source->ExportedUnit = nullptr;
+	FString Error;
+	if (!SaveAsset(Source->GetSourceAsset(), Error))
+	{
+		Source->ExportedUnit = Exported;
+		return MakeErrorJson(Error);
+	}
+	GetAssetRegistry().ScanModifiedAssetFiles({ FPackageName::LongPackageNameToFilename(
+		Source->GetSourceAsset()->GetOutermost()->GetName(), FPackageName::GetAssetPackageExtension()) });
+	const FString Result = MCP_UnitDelete(UnitPath, TEXT("{\"mode\":\"hard\",\"dry_run\":false}"));
+	const TSharedPtr<FJsonObject> Response = ParseObject(Result);
+	if (!Response.IsValid() || !Response->GetBoolField(TEXT("success")))
+		Source->ExportedUnit = Exported;
+	else Source->bHasUpdated = false;
+	Source->LastReport = Result;
+	Source->MarkPackageDirty();
+	if (!SaveAsset(Source->GetSourceAsset(), Error)) return MakeErrorJson(Error);
+	return Result;
+}
 
 FString UMassBattleUnitMCPApi::UpdateSource(AMassBattleUnitSource* Source, bool bSaveAssets)
 {
@@ -3301,10 +3333,12 @@ FString UMassBattleUnitMCPApi::MCP_UnitPlanDelete(const FString& UnitPath, const
 	}
 
 	const FString DeleteMode = NormalizeDeleteMode(Options);
+	bool bDeleteExported = false;
+	Options->TryGetBoolField(TEXT("delete_exported_unit"), bDeleteExported);
 	AMassBattleUnitSource* Source = Unit->GetTypedOuter<AMassBattleUnitSource>();
 	UObject* DeleteTarget = Source ? Source->GetSourceAsset() : Unit;
-	TArray<TSharedPtr<FJsonValue>> Referencers = BuildReferencerJson(DeleteTarget, Source ? Source->ExportedUnit.Get() : nullptr);
-	if (Source) Referencers.Append(BuildReferencerJson(Source->ExportedUnit, DeleteTarget));
+	TArray<TSharedPtr<FJsonValue>> Referencers = BuildReferencerJson(DeleteTarget, Source && bDeleteExported ? Source->ExportedUnit.Get() : nullptr);
+	if (Source && bDeleteExported) Referencers.Append(BuildReferencerJson(Source->ExportedUnit, DeleteTarget));
 
 	bool bAllowReferenced = DeleteMode == TEXT("soft");
 	Options->TryGetBoolField(TEXT("allow_referenced"), bAllowReferenced);
@@ -3324,6 +3358,7 @@ FString UMassBattleUnitMCPApi::MCP_UnitPlanDelete(const FString& UnitPath, const
 	TSharedPtr<FJsonObject> Plan = BuildPlanBase(TEXT("delete_unit"));
 	Plan->SetStringField(TEXT("target_path"), UnitPath);
 	Plan->SetStringField(TEXT("delete_mode"), DeleteMode);
+	Plan->SetBoolField(TEXT("delete_exported_unit"), bDeleteExported);
 	Plan->SetArrayField(TEXT("referencers"), Referencers);
 	Plan->SetBoolField(TEXT("allow_referenced"), bAllowReferenced);
 	Plan->SetBoolField(TEXT("force"), bForce);
